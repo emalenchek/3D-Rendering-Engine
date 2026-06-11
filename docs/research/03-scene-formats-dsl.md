@@ -1,6 +1,6 @@
 # Text-Based 3D Scene Description Formats — Prior Art for a Human-Writable Scene DSL
 
-Research notes (in progress). Date: 2026-06-11.
+Research notes, 2026-06-11. Prior art survey for designing a human-writable scene DSL ("text in") for this engine. Claims carry source URLs and confidence (HIGH/MEDIUM/LOW).
 
 ## 1. Wavefront OBJ (+MTL)
 

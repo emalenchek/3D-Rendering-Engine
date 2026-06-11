@@ -78,10 +78,65 @@ Method note: WebFetch was blocked (HTTP 403) for all domains in this environment
 
 (to be filled)
 
-## Q4: Software rasterizer pipeline
+## Q4: Software rasterizer pipeline (tinyrenderer + Scratchapixel)
 
-(to be filled)
+- **tinyrenderer** (ssloy) is the canonical "write OpenGL from scratch" course: a complete software rasterizer in ~500 lines / 10–20 hours, structured as: model loading → line drawing → triangle rasterization via barycentric coordinates over a bounding box → z-buffer → perspective projection → ModelView/Projection/Viewport matrices → programmable vertex+fragment "shader" structs. (HIGH)
+  - Sources: https://github.com/ssloy/tinyrenderer , https://github.com/ssloy/tinyrenderer/wiki/Lesson-6:-Shaders-for-the-software-renderer , https://haqr.eu/tinyrenderer/rasterization/
+- tinyrenderer's final architecture is instructive: a fixed `triangle()` rasterizer that takes an `IShader` with `vertex(face, vert) -> clip coords` and `fragment(barycentric) -> color/discard`. The pipeline core never changes; effects live in shader objects. (HIGH)
+  - Source: https://github.com/ssloy/tinyrenderer/wiki/Lesson-6:-Shaders-for-the-software-renderer
+- Rasterization inner loop (both sources agree): per triangle, compute screen-space bounding box (clamped to framebuffer), iterate pixels, compute barycentric coords / edge functions; any negative component ⇒ outside, skip. (HIGH)
+  - Sources: https://github.com/ssloy/tinyrenderer , https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-stage.html
+- **Edge function method** (Scratchapixel, after Pineda): point-in-triangle = sign of cross-product edge function for all 3 edges; the same edge function values, normalized, ARE the barycentric coordinates — one computation serves coverage + interpolation. Top-left rule resolves pixels exactly on shared edges. (HIGH)
+  - Source: https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-stage.html
+- **Perspective-correct interpolation** (Scratchapixel): screen-space barycentrics interpolate attributes incorrectly under perspective; correct method ("rational-linear / hyperbolic interpolation"): pre-divide each vertex attribute by vertex z (or multiply by 1/w), interpolate attribute/z and 1/z linearly in screen space with barycentrics, then divide: `attr = (Σ λi·attri/zi) / (Σ λi/zi)`. Depth itself: interpolate 1/z linearly, then invert. (HIGH)
+  - Sources: https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-practical-implementation.html , https://image-ppubs.uspto.gov/dirsearch-public/print/downloadPdf/5222204
+- **Z-buffer**: per-pixel depth array, init to far/∞; write fragment only if its interpolated depth is nearer; resolves visibility with no sorting. (HIGH)
+  - Sources: https://github.com/ssloy/tinyrenderer , https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-stage.html
+- **Near-plane clipping must happen in homogeneous clip space, BEFORE the perspective divide.** Vertices at/behind the camera (w≤0 or z near 0) blow up to infinity / flip sign after division, producing "external triangles" and giant coordinates. Clip each triangle against the near plane (Sutherland–Hodgman against w=ε or z=-near), yielding 0, 1, or 2 triangles, then divide. tinyrenderer largely sidesteps this (models framed safely in front of camera) — a real engine cannot. (HIGH)
+  - Sources: https://www.gamedeveloper.com/business/in-depth-software-rasterizer-and-triangle-clipping , https://gamedev.net/forums/topic/434666-nearfar-clipping-in-a-software-rasterizer/ , http://simonstechblog.blogspot.com/2012/04/software-rasterizer-part-1.html , https://handmade.network/forums/t/7743-3d_software_rasterizer._triangle_clipping_problem
+- X/Y clipping, by contrast, can be replaced by bounding-box clamping ("scissoring") to the framebuffer — only the near plane strictly requires geometric clipping. (MEDIUM — widely stated in the gamedev threads above and standard practice)
+- Optimization note for later (Scratchapixel): edge functions are incremental (constant delta per pixel step) and amenable to 8x8 block testing — relevant if terminal-resolution performance ever becomes an issue (unlikely: ~80×24 to ~300×100 cells). (MEDIUM)
+  - Source: https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-stage.html
 
-## Q5: MVP API surface
+**Q4 synthesis — canonical stage list for our rasterizer:**
+1. Model matrix: object→world (from scene tree flatten)
+2. View matrix: world→camera (inverse of camera node's world transform)
+3. Projection matrix: camera→clip space (4D homogeneous)
+4. Back-face cull (optional, signed area test — free byproduct of edge function)
+5. Near-plane clip in homogeneous coords (Sutherland–Hodgman, 0–2 output triangles)
+6. Perspective divide by w → NDC
+7. Viewport transform → screen/raster space (mind non-square terminal cells: fold cell aspect ratio in here)
+8. Per-triangle: bbox clamp → edge-function/barycentric loop → 1/z depth test vs z-buffer → perspective-correct attribute interpolation → fragment shading → write char/color
+The vertex-shader/fragment-shader split (tinyrenderer Lesson 6) is the right internal seam even if we never expose user shaders.
 
-(to be filled)
+## Q5: MVP API surface vs deferrable
+
+- three.js demonstrates the floor for a *usable* retained API: Scene, PerspectiveCamera, Mesh(BufferGeometry, Material), Renderer.render(scene, camera) — its own "hello cube" uses exactly these plus nothing else, with an unlit material and no lights. (HIGH)
+  - Source: https://discoverthreejs.com/book/first-steps/first-scene/
+- raylib demonstrates the floor for an *immediate* API: camera struct + Begin/End + Draw* primitives; entire library fits a cheatsheet. (HIGH)
+  - Sources: https://www.raylib.com/cheatsheet/cheatsheet.html , https://github.com/raysan5/raylib
+- Filament/bgfx demonstrate that the render core should not know about scene structure: it should consume flat draw lists / renderable sets. (HIGH — Q2 sources)
+- tinyrenderer demonstrates the complete feature ladder and its order: flat-shaded triangles → z-buffer → perspective → camera → Gouraud → textures → normal maps → shadows. Everything after "Gouraud + z-buffer" is optional polish. (HIGH)
+  - Source: https://github.com/ssloy/tinyrenderer
+
+**MVP needs:** mesh from vertex/index arrays; transform (position/rotation/scale) per object; perspective camera; directional + ambient light; flat or Gouraud shading (Lambert N·L); z-buffer; near clipping; render-to-buffer (the ASCII/colour mapping is a presentation layer on top of a float/intensity framebuffer).
+**Defer:** textures/UVs (high effort, low payoff at terminal resolution), material system beyond "color + shading mode", point/spot lights, skeletal/any animation (user mutates transforms per frame instead), shadows, frustum culling beyond near-clip + bbox clamp, multithreading/encoders, spatial acceleration structures.
+
+## Implications for our MVP
+
+1. **Two-layer architecture, stolen from the Forsyth consensus + Filament:** (a) user-facing retained scene: tiny three.js-style tree — `Node {transform, children}`, `Mesh : Node {geometry, material}`, `Camera : Node`, `Light : Node`, `Scene = root`; (b) internal flat pipeline: per frame, one tree walk emits world matrices + a flat array of draw commands `{world_matrix, geometry_ref, material}`; the rasterizer consumes only this array and never sees the tree. This gives three.js ergonomics without scene-graph-as-renderer pathology.
+2. **One entry point**: `renderer.render(scene, camera) -> framebuffer`. The frame loop belongs to the caller (terminal loop natively; requestAnimationFrame in WASM). Renderer owns framebuffer + z-buffer; output is an intensity/color grid, with ASCII glyph mapping as a separate presentation stage — this same seam serves both terminal and browser/WASM targets.
+3. **Geometry = flat typed arrays** (positions, normals, optional colors + index buffer), BufferGeometry-style — trivially serializable, WASM-friendly, no per-vertex objects.
+4. **Pipeline stages fixed, shading pluggable**: implement the 8-stage list from Q4 synthesis as a fixed pipeline with an internal vertex-transform/fragment-shade seam (tinyrenderer Lesson 6 pattern). Do NOT skip homogeneous near-plane clipping — it is the one stage tutorials omit that breaks real interactive cameras.
+5. **Keep the API cheatsheet-sized** (raylib lesson): if the public surface doesn't fit on one page, it's too big for this project. Optionally add 2–3 raylib-style convenience constructors (cube, sphere, plane) so "hello cube" is <10 lines.
+6. **Defer aggressively**: no textures, no animation system, no ECS, no threading. Each has a clear later seam (material struct, per-frame transform mutation, flat draw list already ECS-compatible, bgfx-style encoder split) so deferring now costs nothing architecturally.
+
+## Sources consulted (primary)
+
+- three.js docs/manual: https://threejs.org/docs/ , https://discoverthreejs.com/book/first-steps/first-scene/
+- bgfx: https://github.com/bkaradzic/bgfx , https://bkaradzic.github.io/bgfx/internals.html
+- Filament: https://google.github.io/filament/dup/intro.html , https://github.com/google/filament
+- raylib: https://github.com/raysan5/raylib , https://www.raylib.com/cheatsheet/cheatsheet.html
+- OGRE: https://ogrecave.github.io/ogre/api/1.10/tut__first_scene.html
+- Scene-graph debate: Tom Forsyth "Scene Graphs — Just Say No" (https://tomforsyth1000.github.io/blog.wiki.html), http://www.mindcontrol.org/~hplus/graphics/scene-graph.html
+- Rasterizer: https://github.com/ssloy/tinyrenderer (+ wiki Lessons 0–6), https://www.scratchapixel.com/lessons/3d-basic-rendering/rasterization-practical-implementation/rasterization-stage.html , https://www.gamedeveloper.com/business/in-depth-software-rasterizer-and-triangle-clipping
