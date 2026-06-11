@@ -75,10 +75,6 @@ Method note: direct page fetches were blocked (HTTP 403) for most domains in thi
 
 **Q3 synthesis:** Keep the user-facing model a simple tree (familiar, ergonomic), but internally flatten: each frame, walk the tree once to produce world matrices + a flat draw list; the rasterizer consumes only the flat list. Avoid making the graph the renderer's data structure.
 
-## Q3: Scene graph vs ECS vs flat lists
-
-(to be filled)
-
 ## Q4: Software rasterizer pipeline (tinyrenderer + Scratchapixel)
 
 - **tinyrenderer** (ssloy) is the canonical "write OpenGL from scratch" course: a complete software rasterizer in ~500 lines / 10–20 hours, structured as: model loading → line drawing → triangle rasterization via barycentric coordinates over a bounding box → z-buffer → perspective projection → ModelView/Projection/Viewport matrices → programmable vertex+fragment "shader" structs. (HIGH)
