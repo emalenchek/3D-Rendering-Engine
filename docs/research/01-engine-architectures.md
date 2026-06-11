@@ -1,8 +1,9 @@
 # Research: 3D Engine Architectures & API Design
 
-Status: IN PROGRESS (incremental notes; will be polished at end)
+Status: COMPLETE
 Date: 2026-06-11
-Method note: WebFetch was blocked (HTTP 403) for all domains in this environment; findings come from WebSearch result summaries plus prior-knowledge claims marked accordingly. Confidence ratings reflect this.
+Scope: inform the design of a minimal software-rendering 3D engine (ASCII terminal output + browser via WASM).
+Method note: direct page fetches were blocked (HTTP 403) for most domains in this environment; findings come from WebSearch result summaries cross-checked against prior knowledge. Claims marked with confidence HIGH/MEDIUM/LOW accordingly.
 
 ## Q1: Three.js object model
 

@@ -58,4 +58,39 @@ Date: 2026-06-11. Method: web research on documented precedents (tinyrenderer, G
 ## 5. Scope creep / "write games, not engines"
 - Josh Petrie, "Write Games, Not Engines" (2007, mirrored at geometrian): build a concrete game (here: a concrete demo — spinning shaded mesh in a terminal) with "well defined developmental scope"; extract the engine afterwards from working products, not before. "The notion that you must have an engine to build a non-trivial game is a fallacy." HIGH — https://geometrian.com/projects/blog/write_games_not_engines.html
 - Implication for this MVP: define the deliverable as a demo ("load OBJ, orbit it, flat/Gouraud shaded, in a terminal"), not as "a rendering engine"; defer abstraction layers (material systems, scene graphs, plugin backends) until ≥2 concrete demos exist. — HIGH (direct application)
+- Corroborating precedent for deferring optimization: Kayhan shipped the naive rasterizer in a weekend, and did the tile-based/perf rework as a separate later project (Tyler, "Chasing Triangles in a Tile-based Rasterizer", 2019). — MEDIUM-HIGH — https://tayfunkayhan.wordpress.com/2019/07/26/chasing-triangles-in-a-tile-based-rasterizer/
+
+## 6. Minimal OBJ subset
+- Core statements sufficient for an MVP loader: `v` (position), `vt` (texcoord, 2 floats), `vn` (normal), `f` (face). Face index variants to handle: `v`, `v/vt`, `v//vn`, `v/vt/vn`; indices are 1-based; **negative indices = relative (from end of current array) and are part of the spec** (tinyobjloader supports them). HIGH — https://github.com/tinyobjloader/tinyobjloader , https://paulbourke.net/dataformats/obj/ (spec mirror; fetch blocked, content standard)
+- Faces may have >3 vertices → triangulate. Fan triangulation (v0, vi, vi+1) is correct for convex polygons and is what most minimal loaders do; even tinyobjloader's built-in triangulation "may not work well in some polygon shape" and offers mapbox/earcut as the robust fallback — i.e., fan is an accepted MVP simplification, robust ear-clipping is explicitly post-MVP. HIGH — https://github.com/tinyobjloader/tinyobjloader
+- Safely ignorable for MVP (skip unknown lines): `mtllib`/`usemtl` (materials), `o`/`g` (objects/groups), `s` (smoothing groups), `l`/`p` (lines/points), curves/surfaces, `#` comments. If `vn` absent, compute face normals from cross product (tinyrenderer's model class does effectively this minimal subset). HIGH — https://github.com/tinyobjloader/tinyobjloader , https://github.com/ssloy/tinyrenderer
+- Parser size reference: tinyrenderer's whole OBJ model class is a few dozen lines; tinyobjloader is "tiny" single-file but thousands of lines *because* it handles materials/PBR/curves — a good illustration of where OBJ scope creep goes. MEDIUM
+
+## 7. Orbit camera + raw-mode terminal input
+- Orbit camera = camera position on a sphere around target: `eye = target + r·(cos(pitch)·sin(yaw), sin(pitch), cos(pitch)·cos(yaw))`, then standard lookAt(eye, target, up). State is just {yaw, pitch, radius}; clamp pitch to ±~89° to avoid up-vector degeneracy; keys map to yaw/pitch deltas, +/- to radius (dolly). This is the standard spherical-coordinate formulation used by Gambetta's camera chapter and every orbit-control implementation. HIGH (standard math) — https://gabrielgambetta.com/computer-graphics-from-scratch/
+- Raw-mode input (POSIX), per the kilo "Build Your Own Text Editor" tutorial (the canonical minimal reference): `tcgetattr`/`tcsetattr` on termios; clear `ICANON` (byte-at-a-time, no line buffering) and `ECHO`; set `VMIN=0, VTIME=1` for a non-blocking-ish read with 100 ms timeout — exactly the pattern needed for a render loop that polls keys each frame. Arrow keys arrive as 3-byte escape sequences `ESC [ A/B/C/D`, so the key reader needs a tiny escape-sequence state machine. Restore terminal state via `atexit`. HIGH — https://viewsourcecode.org/snaptoken/kilo/02.enteringRawMode.html , https://viewsourcecode.org/snaptoken/kilo/03.rawInputAndOutput.html
+- MVP shortcut: WASD/+- only (single-byte keys) avoids the escape-sequence parser entirely; add arrow keys later. — HIGH (derived)
+
+## 8. Synthesized MVP feature list
+
+**In scope (MVP):**
+1. f32 math: vec3/vec4, mat4 (mul, lookAt, perspective) — no general math lib
+2. OBJ loader: `v/vt/vn/f` only, 1-based + negative indices, fan triangulation, ignore unknown lines, derive normals if missing
+3. Pipeline: model→view→projection→viewport; back-face cull; edge-function triangle raster; z-buffer interpolating 1/z; perspective-correct attributes (Scratchapixel formulation)
+4. Shading: flat + Gouraud diffuse (one directional light); luminance→ASCII ramp and/or ANSI 256/truecolor cells; optional half-block '▀' for 2x vertical resolution (see 02-ascii-terminal-rendering.md)
+5. Terminal frontend: alternate screen, hide cursor, cursor-home (no clear), one buffered write+flush per frame, SGR run-length merging; raw mode via termios (kilo pattern), WASD/+- orbit camera, fixed-timestep loop with frame timing readout
+6. Near-plane handling: cull triangles crossing near plane (Gambetta-style clipping deferred)
+
+**Explicitly out of MVP (phase 2+):** texture mapping, normal/shadow mapping, full frustum/near clipping, MTL materials, robust triangulation (earcut), scene graph/multiple objects, SIMD/multithreading, WASM frontend, mouse input, antialiasing.
+
+## 9. Phased roadmap (effort grounded in the table above)
+
+Baseline calibration: tinyrenderer's full pipeline = 10–20 h / ~500 LOC; Kayhan's naive 3D rasterizer = ~1 weekend. Terminal frontend and input add work tinyrenderer doesn't have; estimates below assume a competent programmer new to graphics, working from the tutorials.
+
+- **Phase 1 — Wireframe in terminal (8–15 h):** math types, minimal OBJ parse, perspective projection, Bresenham lines to a cell buffer, alternate-screen diff-free redraw, spinning model. Milestone = tinyrenderer lessons 0–1 + terminal backend. De-risks the I/O question on day one.
+- **Phase 2 — Solid shaded renderer (10–20 h):** edge-function fill, z-buffer (1/z), back-face cull, flat+Gouraud diffuse, ASCII/ANSI shading ramp. Equivalent to tinyrenderer lessons 2–6 (the documented 10–20 h core).
+- **Phase 3 — Interactive orbit (5–10 h):** termios raw mode, key polling, spherical orbit camera, frame timing, near-plane culling, output-size adaptation (SIGWINCH/ioctl TIOCGWINSZ). Mostly plumbing; kilo tutorial covers the hard parts.
+- **Phase 4 — Hardening + WASM port (15–30 h):** perspective-correct texturing OR truecolor + half-blocks polish; proper near clipping; then WASM frontend (same core, framebuffer→canvas; the terminal cell buffer abstraction becomes the swap point). Only optimize (SIMD/threads) if profiling shows raster-bound — at 10k cells the data says it won't be; emulator throughput will bind first.
+
+Total MVP (phases 1–3): **~25–45 h**, ~1–2 KLOC — consistent with tinyrenderer (10–20 h, 500 LOC) plus terminal I/O + interactivity overhead. Risk concentrates in terminal-emulator variability (40x per-cell-color penalty on slow emulators), not in rasterization math.
 
