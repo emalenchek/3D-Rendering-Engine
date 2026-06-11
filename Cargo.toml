@@ -1,0 +1,39 @@
+# Cargo workspace root.
+#
+# Working crate name prefix: `tte` (provisional; see docs/00-project-brief.md §7).
+# Layout follows the two-layer architecture from the project brief:
+#   - tte-core : portable engine library (math, scene model, rasterizer, cell buffer)
+#   - tte-cli  : native terminal frontend (binary)
+# A `tte-wasm` crate will be added in a later phase.
+[workspace]
+resolver = "2"
+members = ["crates/tte-core", "crates/tte-cli"]
+
+# Fields shared by all workspace crates (referenced via `field.workspace = true`).
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.94"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/emalenchek/3d-rendering-engine"
+authors = ["emalenchek"]
+
+# Dependency versions are pinned once here and inherited by member crates with
+# `dep.workspace = true`, so upgrades happen in a single place.
+[workspace.dependencies]
+tte-core = { path = "crates/tte-core" }
+
+# Lints applied workspace-wide. Members opt in with `[lints] workspace = true`.
+# Warnings are denied in CI (see .github/workflows/ci.yml), kept as warnings
+# locally so day-to-day editing isn't blocked.
+[workspace.lints.rust]
+unsafe_code = "warn"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Optimize dependencies even in dev builds so the renderer is usable while
+# debugging our own code. Tune as needed once we have benchmarks.
+[profile.dev.package."*"]
+opt-level = 2

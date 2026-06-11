@@ -1,0 +1,6 @@
+# Pin the toolchain so every contributor and CI run uses the same compiler.
+# Phase 1 targets stable Rust. (WASM threads will later need a nightly build;
+# that will be a separate, opt-in toolchain file in the wasm crate.)
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
