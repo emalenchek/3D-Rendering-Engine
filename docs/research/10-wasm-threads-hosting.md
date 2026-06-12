@@ -87,3 +87,124 @@ Sources:
 - https://caniuse.com/wasm-threads
 - https://platform.uno/blog/the-state-of-webassembly-2025-2026/
 - https://reintech.io/blog/webassembly-browser-support-2026-compatibility-guide
+
+---
+
+## 4a. Stable-tracking status (added 2026-06-12)
+
+- WebAssembly atomics tracking issue **rust-lang/rust#77839 still OPEN**;
+  `target_feature = "atomics"` remains **nightly-only**. No stabilization, and
+  **no precompiled std-with-atomics** ships — `-Z build-std=panic_abort,std` is
+  still mandatory to rebuild std. [H]
+- It is actively *moving but not converging*: fresh breakage reports through
+  Aug 2025 (e.g. #145101 "build wasm32-unknown-unknown failed with atomics",
+  const-fn `Mutex::new`/`Condvar::new` issues, cargo #13035) — reinforces the
+  "pin a known-good nightly" rule; a floating nightly will eventually break the
+  threaded job. [H]
+
+Sources:
+- https://github.com/rust-lang/rust/issues/77839
+- https://github.com/rust-lang/rust/issues/145101
+- https://github.com/rust-lang/cargo/issues/13035
+
+> Maintenance note: **GoogleChromeLabs/wasm-bindgen-rayon was ARCHIVED
+> 2024-07-17** (author left Google); the live fork is
+> **RReverser/wasm-bindgen-rayon** (the one this report tracks). So "maintained"
+> = one-person personal fork, not an org-backed project. Bus-factor = 1. [H]
+
+---
+
+## 5. Realistic payoff
+
+- **Mandelbrot demo (RReverser official):** single-thread **273 ms** ->
+  multi-thread **87 ms** ~= **3.1x** on that machine (embarrassingly parallel,
+  near-best case). [H]
+- **Real apps (Squoosh image codecs):** consistent **1.5x-3x** from threads
+  alone, more when combined with SIMD. A tile-based rasterizer is closer to the
+  embarrassingly-parallel end, so expect **upper half of that range on desktop
+  with 4-8 real cores**; far less on mobile/Safari. [M]
+- **Worker-pool spin-up overhead:** `initThreadPool(N)` **greedily** instantiates
+  N Web Workers, each re-instantiating the wasm module over shared memory — a
+  one-time cost of tens-to-hundreds of ms at startup, *not* per-frame. For a
+  long-lived interactive renderer this amortizes; for a one-shot render it can
+  erase the win. Pick N from `navigator.hardwareConcurrency`; **over-provisioning
+  spins up idle workers** (unlike native rayon's lazy pool). [H]
+- **max-memory preset pitfall:** shared `WebAssembly.Memory` cannot grow past the
+  link-time `--max-memory`. Default 1 GiB over-reserves; but a software rasterizer
+  with large/multiple framebuffers can *also* hit the ceiling if set too low.
+  Must be tuned to real framebuffer + scene footprint — a per-build constant you
+  now own. [H]
+
+Sources:
+- https://rreverser.com/wasm-bindgen-rayon-demo/
+- https://web.dev/articles/webassembly-threads
+- https://github.com/RReverser/wasm-bindgen-rayon
+
+---
+
+## 6. Long-term ops burden for a threaded variant
+
+If FR-6.5 is built, the project permanently carries:
+1. **A nightly CI job** pinned to a specific nightly (+ `rust-src`) that rebuilds
+   std via `-Z build-std`. Slower builds; breaks on nightly churn; needs periodic
+   re-pinning. Separate from the stable matrix. [H]
+2. **Dual wasm artifacts** (single-thread stable default + threaded nightly),
+   doubling build/test/size-budget surface and golden-frame parity checks across
+   both. [H]
+3. **Header-aware hosting**: either move the demo off GitHub Pages to a
+   header-capable host (Netlify/Cloudflare Pages/Vercel `_headers`), or ship and
+   maintain **coi-serviceworker** with its first-load reload + SW cache lifecycle.
+   Plus the cross-origin-isolation tax: every third-party subresource needs CORP. [H]
+4. **Runtime fallback detection**: JS must check `self.crossOriginIsolated` (and
+   SAB availability) and **load the single-thread build when isolation fails** —
+   so the single-thread path must stay first-class anyway. The threaded build is
+   strictly *additive*, never a replacement. [H]
+
+Net: threaded variant is a **separate toolchain + separate artifact + separate
+hosting story + a fallback path**, maintained around a bus-factor-1 dependency on
+a nightly compiler feature with no stabilization date.
+
+---
+
+## Verdict for FR-6.5 (stretch): KEEP-AS-STRETCH (do NOT promote, do NOT drop)
+
+- **Don't promote**: nightly-only + build-std + dual artifacts + header hosting +
+  bus-factor-1 dep is too much standing cost to make it a committed deliverable,
+  for a 1.5-3x win that **only lands on cross-origin-isolated desktop** and is
+  weakest exactly where most users are (mobile/Safari).
+- **Don't drop**: the payoff is real (~3x on a parallel rasterizer demo), the
+  recipe is well-trodden, and the single-thread fallback (already required by
+  V5/V7) means the threaded build is purely additive and risk-isolated. It's a
+  legitimate, time-boxed showcase. Keep it gated behind a feature + separate CI
+  job, host the demo on a header-capable host, and only spend the hours if Phase 6
+  finishes early.
+
+### Minimal viable recipe (if kept)
+```toml
+# rust-toolchain.toml
+[toolchain]
+channel = "nightly-2025-11-15"     # PIN; bump deliberately
+components = ["rust-src"]
+targets   = ["wasm32-unknown-unknown"]
+```
+```bash
+# build (threaded variant only)
+RUSTFLAGS='-C target-feature=+atomics,+bulk-memory' \
+  wasm-pack build --target web -- -Z build-std=panic_abort,std
+```
+```js
+// runtime: feature-detect, else load the stable single-thread build
+import init, { initThreadPool } from './pkg-threaded/renderer.js';
+if (self.crossOriginIsolated) {
+  await init();
+  await initThreadPool(navigator.hardwareConcurrency);
+} else {
+  await import('./pkg-single/renderer.js').then(m => m.default());
+}
+```
+- **Hosting:** prefer **Cloudflare Pages / Netlify `_headers`** with
+  `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy:
+  require-corp`. Use **coi-serviceworker only** if the demo must stay on GitHub
+  Pages (accept first-load reload + Safari flakiness).
+- **CI:** one extra nightly job producing `pkg-threaded/`; stable matrix
+  unchanged; golden frames assert byte-parity between both wasm builds.
