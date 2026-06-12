@@ -17,7 +17,7 @@ pub mod present;
 use frame::{ColorMode, FrameSpec, RenderKind};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use tte_core::ShadingMode;
+use tte_core::{Camera, OrbitCamera, PITCH_LIMIT, RADIUS_MAX, RADIUS_MIN, ShadingMode};
 
 /// Model spin per frame: 3° (a full turn every 120 frames / 4 s at 30 FPS).
 /// Shared by interactive and headless modes so frame N is the same picture in
@@ -44,6 +44,10 @@ pub struct ViewOptions {
     pub kind: RenderKind,
     pub shading: ShadingMode,
     pub color: ColorMode,
+    /// Starting orbit view; `None` means the canonical default framing (and, in
+    /// headless mode, the unchanged Phase 1/2 spinning-model dump). `Some` is set
+    /// when any of `--yaw/--pitch/--radius` is given (FR-3.3).
+    pub orbit: Option<OrbitCamera>,
 }
 
 /// Decide what an argument list means. Pure function: unit-testable.
@@ -65,11 +69,31 @@ fn parse_view_args(args: impl Iterator<Item = String>) -> Invocation {
     let mut kind = RenderKind::default();
     let mut shading = ShadingMode::default();
     let mut color = ColorMode::default();
+    // Lazily created the first time an orbit flag appears (FR-3.3).
+    let mut orbit: Option<OrbitCamera> = None;
 
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--headless" => headless = true,
+            "--yaw" => match args.next().and_then(|v| v.parse::<f32>().ok()) {
+                Some(deg) => orbit.get_or_insert_with(OrbitCamera::default).yaw = deg.to_radians(),
+                None => return usage("--yaw expects a number in degrees"),
+            },
+            "--pitch" => match args.next().and_then(|v| v.parse::<f32>().ok()) {
+                Some(deg) => {
+                    let p = deg.to_radians().clamp(-PITCH_LIMIT, PITCH_LIMIT);
+                    orbit.get_or_insert_with(OrbitCamera::default).pitch = p;
+                }
+                None => return usage("--pitch expects a number in degrees"),
+            },
+            "--radius" => match args.next().and_then(|v| v.parse::<f32>().ok()) {
+                Some(r) if r > 0.0 => {
+                    let r = r.clamp(RADIUS_MIN, RADIUS_MAX);
+                    orbit.get_or_insert_with(OrbitCamera::default).radius = r;
+                }
+                _ => return usage("--radius expects a positive number"),
+            },
             "--size" => match args.next().as_deref().map(parse_size) {
                 Some(Some(parsed)) => size = Some(parsed),
                 _ => return usage("--size expects WxH, e.g. --size 80x24"),
@@ -111,6 +135,7 @@ fn parse_view_args(args: impl Iterator<Item = String>) -> Invocation {
             kind,
             shading,
             color,
+            orbit,
         }),
         None => usage("view: missing path to an .obj scene"),
     }
@@ -154,11 +179,16 @@ pub fn run(invocation: Invocation) -> ExitCode {
 }
 
 /// Build the [`FrameSpec`] for a view, given the resolved cell-grid size.
+/// With no orbit flags the camera is the canonical default (so the Phase 1/2
+/// headless dumps are byte-for-byte unchanged); `--yaw/--pitch/--radius` switch
+/// to the requested orbit view (FR-3.3).
 fn frame_spec(opts: &ViewOptions, width: u16, height: u16) -> FrameSpec {
+    let camera = opts.orbit.map_or_else(Camera::default, |o| o.to_camera());
     FrameSpec {
         kind: opts.kind,
         shading: opts.shading,
         color: opts.color,
+        camera,
         width,
         height,
     }
@@ -167,8 +197,8 @@ fn frame_spec(opts: &ViewOptions, width: u16, height: u16) -> FrameSpec {
 fn view(opts: &ViewOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mesh = tte_core::load_obj(&opts.scene)?;
     if opts.headless {
-        // FR-1.8 / FR-2.9: deterministic frame dump. Frame i uses the same
-        // rotation step as interactive frame i.
+        // FR-1.8 / FR-2.9 / FR-3.3: deterministic frame dump. Frame i uses the
+        // same rotation step as interactive frame i; the camera is fixed.
         let (width, height) = opts.size.unwrap_or((80, 24));
         let spec = frame_spec(opts, width, height);
         let stdout = std::io::stdout();
@@ -190,18 +220,25 @@ pub fn help_text() -> String {
     "tte — text-encoded 3D rendering engine\n\
      \n\
      USAGE:\n\
-     \x20   tte view [OPTIONS] <scene.obj>    View a model as a spinning solid\n\
+     \x20   tte view [OPTIONS] <scene.obj>    Orbit a model interactively\n\
      \x20   tte [OPTIONS]\n\
      \n\
      VIEW OPTIONS:\n\
      \x20   --render KIND    solid (default) or wireframe\n\
      \x20   --shading MODE   flat (default) or gouraud (solid only)\n\
      \x20   --mode OUTPUT    ascii (default), truecolor, or halfblock (solid only)\n\
+     \x20   --yaw DEG        Initial orbit azimuth in degrees\n\
+     \x20   --pitch DEG      Initial orbit elevation in degrees\n\
+     \x20   --radius F       Initial orbit distance from the model\n\
      \x20   --headless       Dump frames to stdout (no terminal control)\n\
      \x20   --size WxH       Cell grid size (default: terminal size, or 80x24 headless)\n\
      \x20   --frames N       Number of frames to dump in headless mode (default: 1)\n\
      \n\
      KEYS (interactive):\n\
+     \x20   arrows / hjkl    Orbit the camera\n\
+     \x20   + = i  /  - o    Zoom in / out\n\
+     \x20   space            Toggle auto-orbit\n\
+     \x20   r                Reset the view\n\
      \x20   q, Esc, Ctrl-C   Quit\n\
      \n\
      OPTIONS:\n\
@@ -262,8 +299,46 @@ mod tests {
                 kind: RenderKind::Solid,
                 shading: ShadingMode::Gouraud,
                 color: ColorMode::Truecolor,
+                orbit: None,
             })
         );
+    }
+
+    #[test]
+    fn fr3_3_orbit_flags_build_an_orbit_camera() {
+        let inv = parse(&[
+            "view", "--yaw", "90", "--pitch", "30", "--radius", "8", "cube.obj",
+        ]);
+        let Invocation::View(opts) = inv else {
+            panic!("expected view")
+        };
+        let orbit = opts.orbit.expect("orbit flags should populate orbit");
+        assert!((orbit.yaw - 90f32.to_radians()).abs() < 1e-5);
+        assert!((orbit.pitch - 30f32.to_radians()).abs() < 1e-5);
+        assert!((orbit.radius - 8.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn fr3_3_pitch_flag_is_clamped() {
+        let Invocation::View(opts) = parse(&["view", "--pitch", "200", "cube.obj"]) else {
+            panic!("expected view")
+        };
+        assert!((opts.orbit.unwrap().pitch - PITCH_LIMIT).abs() < 1e-5);
+    }
+
+    #[test]
+    fn fr3_3_bad_orbit_values_are_usage_errors() {
+        for bad in [
+            &["view", "--yaw", "left", "c.obj"][..],
+            &["view", "--pitch", "up", "c.obj"][..],
+            &["view", "--radius", "-3", "c.obj"][..],
+            &["view", "--radius", "0", "c.obj"][..],
+        ] {
+            assert!(
+                matches!(parse(bad), Invocation::Usage(_)),
+                "expected usage error for {bad:?}"
+            );
+        }
     }
 
     #[test]
@@ -279,6 +354,7 @@ mod tests {
                 kind: RenderKind::Solid,
                 shading: ShadingMode::Flat,
                 color: ColorMode::Ascii,
+                orbit: None,
             })
         );
     }

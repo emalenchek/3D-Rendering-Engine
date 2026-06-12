@@ -28,7 +28,7 @@ pub mod shading;
 pub mod solid;
 pub mod triangle;
 
-pub use camera::Camera;
+pub use camera::{Camera, OrbitCamera, PITCH_LIMIT, RADIUS_MAX, RADIUS_MIN};
 pub use cell::CellBuffer;
 pub use color::{Material, Rgb};
 pub use framebuffer::Framebuffer;

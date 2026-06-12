@@ -5,18 +5,25 @@ expression: "String::from_utf8(out).unwrap()"
 tte — text-encoded 3D rendering engine
 
 USAGE:
-    tte view [OPTIONS] <scene.obj>    View a model as a spinning solid
+    tte view [OPTIONS] <scene.obj>    Orbit a model interactively
     tte [OPTIONS]
 
 VIEW OPTIONS:
     --render KIND    solid (default) or wireframe
     --shading MODE   flat (default) or gouraud (solid only)
     --mode OUTPUT    ascii (default), truecolor, or halfblock (solid only)
+    --yaw DEG        Initial orbit azimuth in degrees
+    --pitch DEG      Initial orbit elevation in degrees
+    --radius F       Initial orbit distance from the model
     --headless       Dump frames to stdout (no terminal control)
     --size WxH       Cell grid size (default: terminal size, or 80x24 headless)
     --frames N       Number of frames to dump in headless mode (default: 1)
 
 KEYS (interactive):
+    arrows / hjkl    Orbit the camera
+    + = i  /  - o    Zoom in / out
+    space            Toggle auto-orbit
+    r                Reset the view
     q, Esc, Ctrl-C   Quit
 
 OPTIONS:
