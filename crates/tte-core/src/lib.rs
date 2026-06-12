@@ -17,13 +17,16 @@
 pub mod camera;
 pub mod cell;
 pub mod color;
+pub mod dsl;
 pub mod framebuffer;
 pub mod math;
 pub mod mesh;
 pub mod obj;
 pub mod present;
+pub mod primitives;
 pub mod raster;
 pub mod render;
+pub mod scene;
 pub mod shading;
 pub mod solid;
 pub mod triangle;
@@ -31,13 +34,15 @@ pub mod triangle;
 pub use camera::{Camera, OrbitCamera, PITCH_LIMIT, RADIUS_MAX, RADIUS_MIN};
 pub use cell::CellBuffer;
 pub use color::{Material, Rgb};
+pub use dsl::{DslError, parse as parse_scene, serialize as serialize_scene};
 pub use framebuffer::Framebuffer;
 pub use math::{Mat4, Vec3, Vec4};
 pub use mesh::Mesh;
 pub use obj::{ObjError, load_obj, parse_obj};
 pub use render::render_wireframe;
+pub use scene::{Geometry, Node, Scene, Transform};
 pub use shading::{DirectionalLight, ShadingMode};
-pub use solid::{ShadeOptions, render_solid};
+pub use solid::{ShadeOptions, render_mesh_into, render_scene, render_solid};
 
 /// Returns the crate's semantic version string (from `Cargo.toml`).
 pub fn version() -> &'static str {
