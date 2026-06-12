@@ -35,7 +35,15 @@ pub fn render_solid(
     opts: ShadeOptions,
 ) -> Framebuffer {
     let mut fb = Framebuffer::new(width, height);
-    render_mesh_into(&mut fb, mesh, model, camera, &opts.light, opts.shading, opts.material);
+    render_mesh_into(
+        &mut fb,
+        mesh,
+        model,
+        camera,
+        &opts.light,
+        opts.shading,
+        opts.material,
+    );
     fb
 }
 
@@ -56,9 +64,20 @@ pub fn render_mesh_into(
     // World-space positions and normals. The model's linear part transforms
     // normals correctly for rotation/uniform scale; non-uniform scale would
     // need the inverse-transpose — deferred with the material system.
-    let world_pos: Vec<Vec3> = mesh.positions.iter().map(|&p| transform_point(model, p)).collect();
-    let world_nrm: Vec<Vec3> = mesh.normals.iter().map(|&n| transform_dir(model, n)).collect();
-    let clip: Vec<Vec4> = world_pos.iter().map(|&p| view_proj * p.extend(1.0)).collect();
+    let world_pos: Vec<Vec3> = mesh
+        .positions
+        .iter()
+        .map(|&p| transform_point(model, p))
+        .collect();
+    let world_nrm: Vec<Vec3> = mesh
+        .normals
+        .iter()
+        .map(|&n| transform_dir(model, n))
+        .collect();
+    let clip: Vec<Vec4> = world_pos
+        .iter()
+        .map(|&p| view_proj * p.extend(1.0))
+        .collect();
 
     for &[ia, ib, ic] in &mesh.triangles {
         let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
@@ -109,7 +128,15 @@ where
             Geometry::Group => None,
         };
         if let Some(mesh) = mesh {
-            render_mesh_into(&mut fb, &mesh, drawable.world, camera, &light, shading, drawable.material);
+            render_mesh_into(
+                &mut fb,
+                &mesh,
+                drawable.world,
+                camera,
+                &light,
+                shading,
+                drawable.material,
+            );
         }
     }
     fb

@@ -94,6 +94,23 @@ is reproducible for tests.
 | FR-3.4 | Live resize: the interactive loop renders at the current terminal size every frame, so a resize shows on the next frame; size clamped to a usable minimum. |
 | FR-3.5 | Interactive controls: arrows/hjkl orbit, +/=/i zoom in, −/o zoom out, space toggles auto-orbit, r resets, q/Esc/Ctrl-C quit. Key→action mapping is pure + unit-tested; the live loop is covered by a PTY smoke test. |
 
+## 3c. Phase 4 — Scene DSL ("text in")
+
+**Deliverable:** describe whole scenes — multiple placed primitives/meshes, named
+materials, camera, light — in a small human-writable text format, and render them.
+This completes the MVP ("text in, text out").
+
+| ID | Requirement |
+|---|---|
+| FR-4.1 | DSL parser: KDL-style nodes (name, optional `"label"`, `key=value` props, `(x y z)` vectors, `{ children }`), `//` and `/* */` comments; line-numbered errors; never panics/hangs on arbitrary input |
+| FR-4.2 | `Scene` model: background, optional camera, directional light, named materials, and a tree of transform/geometry nodes (TRS transforms compose down the tree) |
+| FR-4.3 | Builder (DSL → `Scene`): named materials (define-once/use-many), defaults for every field, validation (unknown elements, missing `mesh src`, bad property types) with friendly messages |
+| FR-4.4 | Built-in primitives: `cube`, `sphere` (rings/segments), `plane` — unit-sized, centered, with normals |
+| FR-4.5 | Multi-object rendering: flatten the node tree to world transforms and rasterize every drawable into one shared z-buffer; built-in primitives baked in core, external meshes resolved by a caller-supplied loader |
+| FR-4.6 | CLI: `tte view scene.scene` renders a scene (`.obj` still renders a single model); deterministic headless output; line-numbered parse errors surfaced |
+| FR-4.7 | Robustness: `parse(serialize(scene)) == scene` round-trip (property test); parser-never-panics fuzz-style property tests over random text and token soup |
+| FR-4.8 | Hot-reload: in interactive mode, a scene file edited on disk is re-parsed and shown live; a reload that fails to parse keeps the last good scene |
+
 ## 4. Test plan (requirement → tests)
 
 Status values: ✅ passing · 🚧 planned (test to be written with the feature).
@@ -125,7 +142,15 @@ Status values: ✅ passing · 🚧 planned (test to be written with the feature)
 | FR-3.3 | Unit + E2E + golden | `fr3_3_*`: orbit-flag parsing + pitch clamp + bad-value errors (`lib.rs`); orbit golden frame + cross-run determinism (`tte-cli/tests/e2e_render.rs`) | ✅ |
 | FR-3.4 | Unit | `fr3_4_clamp_dims_enforces_minimum` — `tte-cli/src/frame.rs`; loop re-renders at `terminal::size()` each frame | ✅ |
 | FR-3.5 | Unit + PTY | `fr3_5_*` key→action mapping (`tte-cli/src/interactive.rs`); `fr3_5_interactive_orbits_then_quits` (`expectrl`, `#[ignore]`, unix) | ✅ |
-| NFR-1 | Integration + E2E | `nfr1_*`: double-render equality (wireframe + solid, lib) + byte-identical repeated CLI runs (e2e) | ✅ |
+| FR-4.1 | Unit + property | `fr4_1_*` in `tte-core/src/dsl.rs` (primitives, comments, nesting, line-numbered errors, mesh src); `fr4_7_parser_never_panics_*` fuzz-style props — `tests/scene_dsl.rs` | ✅ |
+| FR-4.2 | Unit | `fr4_5_flatten_composes_child_transforms`, `fr4_2_trs_*` (transform compose) — `scene.rs`, `math.rs` | ✅ |
+| FR-4.3 | Unit | `fr4_3_*`: named materials + fallback, camera/light props, unknown-element error — `dsl.rs`, `scene.rs` | ✅ |
+| FR-4.4 | Unit | `fr4_4_*` in `tte-core/src/primitives.rs`: cube extent, sphere unit-length, plane up-normal | ✅ |
+| FR-4.5 | Integration | `fr4_5_renders_a_multi_object_scene`, `fr4_5_mesh_refs_use_the_loader` — `tests/scene_dsl.rs` | ✅ |
+| FR-4.6 | E2E + golden | `fr4_6_*`: scene golden frame, determinism, unsupported-extension + parse-error paths — `tte-cli/tests/e2e_render.rs` | ✅ |
+| FR-4.7 | Property | `fr4_7_round_trip_is_stable` + `fr4_7_round_trip_through_serialize_and_parse`; parser-never-panics over random text & token soup (4096 cases) | ✅ |
+| FR-4.8 | Manual + unit | `ReloadWatch` (mtime poll) in `tte-cli/src/interactive.rs`; hot-reload exercised manually (file-watch timing is impractical to assert in CI) | ✅ |
+| NFR-1 | Integration + E2E | `nfr1_*`: double-render equality (wireframe + solid, lib) + byte-identical repeated CLI runs (e2e); scene determinism | ✅ |
 | NFR-2 | CI | test job matrix: ubuntu/macos/windows | ✅ |
 | NFR-3 | Bench | `benches/raster.rs` (criterion): wireframe 1k-tri@200×50 ≈ 143 µs, solid ≈ 111 µs — ≥35× inside the ≤5 ms bound (2026-06, CI-class hardware) | ✅ |
 | NFR-4 | CI | lint job (`fmt --check`, `clippy -D warnings`) | ✅ |
@@ -147,8 +172,14 @@ fixture scene (tests/data/) ──> real `tte` binary, --headless, fixed size/ca
                      insta::assert_snapshot! ──> committed .snap golden file
 ```
 
-## 5. Later phases (outline — to be specified at phase start)
+## 5. MVP status & future work
 
-- **Phase 3 (interactive orbit):** FR-3.x — raw mode, orbit camera, resize. PTY tests enter scope.
-- **Phase 4 (scene DSL):** FR-4.x — KDL-grammar parser, named materials, mesh refs,
-  diagnostics, hot reload. Property round-trips + `cargo-fuzz` on the parser; golden frames per scene fixture.
+**Phases 1–4 are complete — the MVP is delivered** ("text in, text out": OBJ models and
+DSL scenes render as solid, shaded, depth-correct frames in the terminal, navigable with an
+orbit camera). Beyond the MVP (per the [project brief](00-project-brief.md) roadmap, phases 5–6):
+
+- **Hardening:** true near-plane Sutherland–Hodgman clipping (vs. cull), exact top-left fill
+  rule, textures/MTL materials, point/spot lights, light intensity in the shading model.
+- **WASM frontend:** `tte-wasm` crate, cell-grid → `<canvas>` presenter, demo page.
+- **Performance push:** tile-based multithreading (rayon), SIMD raster loop, sub-cell blitters
+  (quadrant/sextant), pixel protocols (Kitty/Sixel), `cargo-fuzz` (nightly) on the parsers.

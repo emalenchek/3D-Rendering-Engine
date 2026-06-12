@@ -37,7 +37,10 @@ impl std::fmt::Display for DslError {
 impl std::error::Error for DslError {}
 
 fn err<T>(line: usize, message: impl Into<String>) -> Result<T, DslError> {
-    Err(DslError { line, message: message.into() })
+    Err(DslError {
+        line,
+        message: message.into(),
+    })
 }
 
 /// Parse DSL source into a [`Scene`] (FR-4.1, FR-4.3).
@@ -81,12 +84,18 @@ fn tokenize(source: &str) -> Result<Vec<Token>, DslError> {
         let c = bytes[i] as char;
         match c {
             '\n' => {
-                out.push(Token { tok: Tok::Sep, line });
+                out.push(Token {
+                    tok: Tok::Sep,
+                    line,
+                });
                 line += 1;
                 i += 1;
             }
             ';' => {
-                out.push(Token { tok: Tok::Sep, line });
+                out.push(Token {
+                    tok: Tok::Sep,
+                    line,
+                });
                 i += 1;
             }
             ' ' | '\t' | '\r' => i += 1,
@@ -110,29 +119,47 @@ fn tokenize(source: &str) -> Result<Vec<Token>, DslError> {
                 i += 1;
             }
             '(' => {
-                out.push(Token { tok: Tok::LParen, line });
+                out.push(Token {
+                    tok: Tok::LParen,
+                    line,
+                });
                 i += 1;
             }
             ')' => {
-                out.push(Token { tok: Tok::RParen, line });
+                out.push(Token {
+                    tok: Tok::RParen,
+                    line,
+                });
                 i += 1;
             }
             '{' => {
-                out.push(Token { tok: Tok::LBrace, line });
+                out.push(Token {
+                    tok: Tok::LBrace,
+                    line,
+                });
                 i += 1;
             }
             '}' => {
-                out.push(Token { tok: Tok::RBrace, line });
+                out.push(Token {
+                    tok: Tok::RBrace,
+                    line,
+                });
                 i += 1;
             }
             '"' => {
                 let (s, next) = lex_string(bytes, i + 1, line)?;
-                out.push(Token { tok: Tok::Str(s), line });
+                out.push(Token {
+                    tok: Tok::Str(s),
+                    line,
+                });
                 i = next;
             }
             c if c == '-' || c == '+' || c == '.' || c.is_ascii_digit() => {
                 let (n, next) = lex_number(bytes, i, line)?;
-                out.push(Token { tok: Tok::Num(n), line });
+                out.push(Token {
+                    tok: Tok::Num(n),
+                    line,
+                });
                 i = next;
             }
             c if is_ident_start(c) => {
@@ -141,12 +168,18 @@ fn tokenize(source: &str) -> Result<Vec<Token>, DslError> {
                     i += 1;
                 }
                 let word = std::str::from_utf8(&bytes[start..i]).unwrap().to_string();
-                out.push(Token { tok: Tok::Ident(word), line });
+                out.push(Token {
+                    tok: Tok::Ident(word),
+                    line,
+                });
             }
             other => return err(line, format!("unexpected character '{other}'")),
         }
     }
-    out.push(Token { tok: Tok::Sep, line }); // ensure a trailing terminator
+    out.push(Token {
+        tok: Tok::Sep,
+        line,
+    }); // ensure a trailing terminator
     Ok(out)
 }
 
@@ -267,9 +300,20 @@ impl Parser {
                 self.pos += 1;
                 name
             }
-            other => return err(line, format!("expected a node name, found {}", describe(&other))),
+            other => {
+                return err(
+                    line,
+                    format!("expected a node name, found {}", describe(&other)),
+                );
+            }
         };
-        let mut node = RawNode { name, line, args: Vec::new(), props: Vec::new(), children: Vec::new() };
+        let mut node = RawNode {
+            name,
+            line,
+            args: Vec::new(),
+            props: Vec::new(),
+            children: Vec::new(),
+        };
 
         loop {
             match self.peek().clone() {
@@ -325,14 +369,20 @@ impl Parser {
                             *slot = n;
                         }
                         other => {
-                            return err(line, format!("expected number in vector, found {}", describe(&other)));
+                            return err(
+                                line,
+                                format!("expected number in vector, found {}", describe(&other)),
+                            );
                         }
                     }
                 }
                 self.expect(Tok::RParen)?;
                 Ok(Value::Vec3(comps))
             }
-            other => err(line, format!("expected a value, found {}", describe(&other))),
+            other => err(
+                line,
+                format!("expected a value, found {}", describe(&other)),
+            ),
         }
     }
 
@@ -370,7 +420,10 @@ fn describe(tok: &Tok) -> String {
 /// an equal `Scene` (FR-4.7).
 pub fn serialize(scene: &Scene) -> String {
     let mut out = String::from("scene {\n");
-    out.push_str(&format!("    background color={}\n", fmt_color(scene.background)));
+    out.push_str(&format!(
+        "    background color={}\n",
+        fmt_color(scene.background)
+    ));
     if let Some(c) = scene.camera {
         out.push_str(&format!(
             "    camera position={} look-at={} fov={}\n",
@@ -386,7 +439,11 @@ pub fn serialize(scene: &Scene) -> String {
         fmt_num(scene.light.ambient),
     ));
     for (name, color) in &scene.materials {
-        out.push_str(&format!("    material {} base-color={}\n", quote(name), fmt_color(*color)));
+        out.push_str(&format!(
+            "    material {} base-color={}\n",
+            quote(name),
+            fmt_color(*color)
+        ));
     }
     for node in &scene.roots {
         write_node(&mut out, node, 1);
@@ -481,7 +538,8 @@ fn build_scene(mut nodes: Vec<RawNode>) -> Result<Scene, DslError> {
                     .or(node.args.first().and_then(as_color))
                     .ok_or_else(|| DslError {
                         line: node.line,
-                        message: "background needs a color, e.g. background color=(0.1 0.1 0.1)".into(),
+                        message: "background needs a color, e.g. background color=(0.1 0.1 0.1)"
+                            .into(),
                     })?;
                 scene.background = color;
             }
@@ -549,7 +607,13 @@ fn build_node(raw: RawNode) -> Result<Node, DslError> {
         .map(build_node)
         .collect::<Result<Vec<_>, _>>()?;
 
-    Ok(Node { name, transform, geometry, material, children })
+    Ok(Node {
+        name,
+        transform,
+        geometry,
+        material,
+        children,
+    })
 }
 
 // --- property accessors -----------------------------------------------------
@@ -576,7 +640,10 @@ fn prop_num(node: &RawNode, key: &str) -> Result<Option<f32>, DslError> {
 fn prop_vec(node: &RawNode, key: &str) -> Result<Option<Vec3>, DslError> {
     match find(node, key) {
         Some(Value::Vec3(v)) => Ok(Some(Vec3::new(v[0], v[1], v[2]))),
-        Some(_) => err(node.line, format!("{key} must be a vector like ({key}=(x y z))")),
+        Some(_) => err(
+            node.line,
+            format!("{key} must be a vector like ({key}=(x y z))"),
+        ),
         None => Ok(None),
     }
 }
@@ -584,7 +651,10 @@ fn prop_vec(node: &RawNode, key: &str) -> Result<Option<Vec3>, DslError> {
 fn prop_color(node: &RawNode, key: &str) -> Result<Option<Rgb>, DslError> {
     match find(node, key) {
         Some(Value::Vec3(v)) => Ok(Some(rgb_from_unit(*v))),
-        Some(_) => err(node.line, format!("{key} must be a color like ({key}=(r g b))")),
+        Some(_) => err(
+            node.line,
+            format!("{key} must be a color like ({key}=(r g b))"),
+        ),
         None => Ok(None),
     }
 }
@@ -631,13 +701,18 @@ mod tests {
 
     #[test]
     fn fr4_1_parses_primitives_and_transforms() {
-        let scene = parse(
-            "scene {\n  sphere \"ball\" translate=(0 1 0) scale=2\n  plane scale=(8 1 8)\n}",
-        )
-        .unwrap();
+        let scene =
+            parse("scene {\n  sphere \"ball\" translate=(0 1 0) scale=2\n  plane scale=(8 1 8)\n}")
+                .unwrap();
         assert_eq!(scene.roots.len(), 2);
         assert_eq!(scene.roots[0].name.as_deref(), Some("ball"));
-        assert_eq!(scene.roots[0].geometry, Geometry::Sphere { rings: 12, segments: 24 });
+        assert_eq!(
+            scene.roots[0].geometry,
+            Geometry::Sphere {
+                rings: 12,
+                segments: 24
+            }
+        );
         assert_eq!(scene.roots[0].transform.scale, Vec3::new(2.0, 2.0, 2.0));
         assert_eq!(scene.roots[1].geometry, Geometry::Plane);
     }
@@ -657,11 +732,13 @@ mod tests {
 
     #[test]
     fn fr4_3_named_materials_and_references() {
-        let scene =
-            parse("material \"red\" base-color=(1 0 0)\ncube material=red").unwrap();
+        let scene = parse("material \"red\" base-color=(1 0 0)\ncube material=red").unwrap();
         assert_eq!(scene.materials.len(), 1);
         assert_eq!(scene.roots[0].material.as_deref(), Some("red"));
-        assert_eq!(scene.resolve_material(Some("red")).base_color, Rgb::new(255, 0, 0));
+        assert_eq!(
+            scene.resolve_material(Some("red")).base_color,
+            Rgb::new(255, 0, 0)
+        );
     }
 
     #[test]
@@ -693,7 +770,11 @@ mod tests {
     #[test]
     fn fr4_3_unknown_element_is_an_error() {
         let e = parse("teapot").unwrap_err();
-        assert!(e.message.contains("unknown scene element"), "got: {}", e.message);
+        assert!(
+            e.message.contains("unknown scene element"),
+            "got: {}",
+            e.message
+        );
     }
 
     #[test]

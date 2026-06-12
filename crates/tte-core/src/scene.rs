@@ -64,7 +64,11 @@ pub struct SceneLight {
 
 impl Default for SceneLight {
     fn default() -> Self {
-        Self { direction: Vec3::new(-0.5, -1.0, -0.8), intensity: 1.0, ambient: 0.15 }
+        Self {
+            direction: Vec3::new(-0.5, -1.0, -0.8),
+            intensity: 1.0,
+            ambient: 0.15,
+        }
     }
 }
 
@@ -104,7 +108,10 @@ pub enum Geometry {
     /// Transform-only group (no geometry of its own).
     Group,
     Cube,
-    Sphere { rings: u32, segments: u32 },
+    Sphere {
+        rings: u32,
+        segments: u32,
+    },
     Plane,
     /// External mesh asset (OBJ), resolved relative to the scene file.
     MeshRef(String),
@@ -208,16 +215,25 @@ mod tests {
     #[test]
     fn fr4_5_flatten_composes_child_transforms() {
         let child = Node {
-            transform: Transform { translate: Vec3::new(1.0, 0.0, 0.0), ..Default::default() },
+            transform: Transform {
+                translate: Vec3::new(1.0, 0.0, 0.0),
+                ..Default::default()
+            },
             geometry: Geometry::Cube,
             ..Default::default()
         };
         let parent = Node {
-            transform: Transform { translate: Vec3::new(0.0, 2.0, 0.0), ..Default::default() },
+            transform: Transform {
+                translate: Vec3::new(0.0, 2.0, 0.0),
+                ..Default::default()
+            },
             children: vec![child],
             ..Default::default()
         };
-        let scene = Scene { roots: vec![parent], ..Default::default() };
+        let scene = Scene {
+            roots: vec![parent],
+            ..Default::default()
+        };
         let drawables = scene.flatten();
         assert_eq!(drawables.len(), 1, "group parent contributes no geometry");
         // Cube ends up at parent+child translation = (1, 2, 0).
@@ -231,7 +247,10 @@ mod tests {
             materials: vec![("red".into(), Rgb::new(200, 10, 10))],
             ..Default::default()
         };
-        assert_eq!(scene.resolve_material(Some("red")).base_color, Rgb::new(200, 10, 10));
+        assert_eq!(
+            scene.resolve_material(Some("red")).base_color,
+            Rgb::new(200, 10, 10)
+        );
         assert_eq!(scene.resolve_material(Some("missing")), Material::default());
         assert_eq!(scene.resolve_material(None), Material::default());
     }

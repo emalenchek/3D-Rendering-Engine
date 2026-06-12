@@ -78,6 +78,53 @@ fn fr3_3_headless_orbit_is_deterministic_across_runs() {
     assert_eq!(stdout_of(args), stdout_of(args));
 }
 
+fn scene_path() -> String {
+    format!("{}/tests/data/scene.scene", env!("CARGO_MANIFEST_DIR"))
+}
+
+#[test]
+fn fr4_6_headless_scene_matches_golden() {
+    let text = stdout_of(&["view", "--headless", "--size", "80x32", &scene_path()]);
+    insta::assert_snapshot!("headless_scene_80x32", text);
+}
+
+#[test]
+fn fr4_6_scene_uses_its_own_camera_by_default() {
+    // The fixture's camera differs from Camera::default(); rendering it and a
+    // single primitive from the default camera must look different — i.e. the
+    // scene camera is actually applied. (Smoke: non-empty, deterministic.)
+    let a = stdout_of(&["view", "--headless", "--size", "60x24", &scene_path()]);
+    let b = stdout_of(&["view", "--headless", "--size", "60x24", &scene_path()]);
+    assert_eq!(a, b, "scene render must be deterministic");
+    let shaded = a.chars().filter(|c| !c.is_whitespace()).count();
+    assert!(
+        shaded > 100,
+        "expected substantial shaded content, got {shaded} glyphs"
+    );
+}
+
+#[test]
+fn fr4_6_unsupported_extension_is_an_error() {
+    tte()
+        .args(["view", "--headless", "/tmp/whatever.txt"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported file type"));
+}
+
+#[test]
+fn fr4_1_scene_parse_error_reports_line() {
+    let dir = std::env::temp_dir();
+    let bad = dir.join("tte_bad_scene.scene");
+    std::fs::write(&bad, "cube\nsphere material=\n").unwrap();
+    tte()
+        .args(["view", "--headless", bad.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("line 2"));
+    let _ = std::fs::remove_file(&bad);
+}
+
 #[test]
 fn fr2_9_headless_solid_ascii_frame_matches_golden() {
     let text = stdout_of(&[

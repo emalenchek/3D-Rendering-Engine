@@ -34,7 +34,11 @@ pub fn cube() -> Mesh {
         triangles.push([base, base + 1, base + 2]);
         triangles.push([base, base + 2, base + 3]);
     }
-    Mesh { positions, normals, triangles }
+    Mesh {
+        positions,
+        normals,
+        triangles,
+    }
 }
 
 /// Unit-radius UV sphere (`rings` latitude bands × `segments` longitude). For
@@ -63,7 +67,11 @@ pub fn sphere(rings: u32, segments: u32) -> Mesh {
         }
     }
     let normals = positions.clone();
-    Mesh { positions, normals, triangles }
+    Mesh {
+        positions,
+        normals,
+        triangles,
+    }
 }
 
 /// Unit square in the XZ plane (normal +Y), spanning ±0.5.
@@ -76,7 +84,11 @@ pub fn plane() -> Mesh {
     ];
     let normals = vec![Vec3::Y; 4];
     let triangles = vec![[0, 1, 2], [0, 2, 3]];
-    Mesh { positions, normals, triangles }
+    Mesh {
+        positions,
+        normals,
+        triangles,
+    }
 }
 
 #[cfg(test)]

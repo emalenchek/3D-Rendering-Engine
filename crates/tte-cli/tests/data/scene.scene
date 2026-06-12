@@ -1,0 +1,22 @@
+// Phase 4 test fixture: a small primitives-only scene (no external meshes), so
+// it renders deterministically without asset files.
+scene {
+    background color=(0 0 0)
+
+    material "red"  base-color=(0.85 0.15 0.15)
+    material "blue" base-color=(0.2 0.4 0.9)
+
+    camera position=(4 3 6) look-at=(0 0.5 0) fov=50
+    light direction=(-1 -2 -1) intensity=1.2 ambient=0.18
+
+    // A ground plane with two balls and a box grouped above it.
+    plane scale=(8 1 8)
+
+    sphere "left"  translate=(-1.5 0.6 0) material="red"
+    sphere "right" translate=(1.5 0.6 0)  material="blue"
+
+    node "tower" translate=(0 0.5 -1.5) {
+        cube material="red"
+        cube translate=(0 1.1 0) scale=(0.7 0.7 0.7) material="blue"
+    }
+}
