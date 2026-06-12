@@ -176,10 +176,17 @@ fixture scene (tests/data/) ──> real `tte` binary, --headless, fixed size/ca
 
 **Phases 1–4 are complete — the MVP is delivered** ("text in, text out": OBJ models and
 DSL scenes render as solid, shaded, depth-correct frames in the terminal, navigable with an
-orbit camera). Beyond the MVP (per the [project brief](00-project-brief.md) roadmap, phases 5–6):
+orbit camera), released as **v1.0.0** (see [CHANGELOG.md](../CHANGELOG.md)).
 
-- **Hardening:** true near-plane Sutherland–Hodgman clipping (vs. cull), exact top-left fill
-  rule, textures/MTL materials, point/spot lights, light intensity in the shading model.
-- **WASM frontend:** `tte-wasm` crate, cell-grid → `<canvas>` presenter, demo page.
-- **Performance push:** tile-based multithreading (rayon), SIMD raster loop, sub-cell blitters
-  (quadrant/sextant), pixel protocols (Kitty/Sixel), `cargo-fuzz` (nightly) on the parsers.
+**Next: v2.0** — Browser/WASM frontend + Performance push. Detailed requirements
+(FR-5.x / FR-6.x), decisions, roadmap, risks, and research spikes are scoped in
+**[docs/04-v2.0-scope.md](04-v2.0-scope.md)**. In brief:
+
+- **Phase 5 — WASM frontend:** `tte-wasm` crate, core cell-grid → `<canvas>` frame export,
+  browser viewer with mouse orbit + live scene editor, `wasm-pack` build, CI wasm job.
+- **Phase 6 — Performance push:** tile-based multithreading (rayon), SIMD raster loop,
+  behavior-preserving (golden-frame parity) feature matrix, expanded benches; (stretch) wasm threads.
+
+Further-out hardening (not yet scheduled): true near-plane Sutherland–Hodgman clipping (vs.
+cull), exact top-left fill rule, textures/MTL materials, point/spot lights, sub-cell blitters
+(quadrant/sextant), pixel protocols (Kitty/Sixel), `cargo-fuzz` (nightly) on the parsers.
