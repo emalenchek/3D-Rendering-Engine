@@ -51,6 +51,7 @@ Full setup guide: [docs/03-dev-setup.md](docs/03-dev-setup.md)
 - **[Requirements spec & test plan](docs/01-requirements-spec.md)** — requirement IDs mapped to functional e2e tests
 - **[Test harness guide](docs/02-test-harness.md)** — test kinds, golden-frame snapshots, e2e patterns, CI gates
 - **[Dev environment setup](docs/03-dev-setup.md)** — prerequisites, build, dependencies, tooling
+- **[v2.0 scope](docs/04-v2.0-scope.md)** — next release: Browser/WASM frontend + Performance push (proposed)
 - Research reports (cited, confidence-rated):
   1. [3D engine architectures & API design](docs/research/01-engine-architectures.md)
   2. [ASCII/terminal 3D rendering prior art & performance limits](docs/research/02-ascii-terminal-rendering.md)
