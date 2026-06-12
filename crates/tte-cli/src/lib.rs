@@ -3,17 +3,21 @@
 //! Library + thin `main.rs` shim layout (binary-only crates can't have
 //! integration tests; see docs/02-test-harness.md §2).
 //!
-//! Phase 1 surface (docs/01-requirements-spec.md §3):
-//! `tte view model.obj` — interactive spinning wireframe (FR-1.7)
+//! Surface (docs/01-requirements-spec.md §3, §3a):
+//! `tte view model.obj` — interactive spinning model (FR-1.7)
 //! `tte view --headless --size WxH --frames N model.obj` — deterministic
-//! plain-text frame dump for tests and pipelines (FR-1.8).
+//! frame dump for tests and pipelines (FR-1.8)
+//! `--render solid|wireframe  --shading flat|gouraud  --mode ascii|truecolor|halfblock`
+//! select the Phase 2 rendering path (FR-2.9).
 
+pub mod frame;
 pub mod interactive;
 pub mod present;
 
+use frame::{ColorMode, FrameSpec, RenderKind};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use tte_core::{Camera, render_wireframe};
+use tte_core::ShadingMode;
 
 /// Model spin per frame: 3° (a full turn every 120 frames / 4 s at 30 FPS).
 /// Shared by interactive and headless modes so frame N is the same picture in
@@ -37,6 +41,9 @@ pub struct ViewOptions {
     /// Cell grid size; `None` in interactive mode means "follow the terminal".
     pub size: Option<(u16, u16)>,
     pub frames: u32,
+    pub kind: RenderKind,
+    pub shading: ShadingMode,
+    pub color: ColorMode,
 }
 
 /// Decide what an argument list means. Pure function: unit-testable.
@@ -55,6 +62,9 @@ fn parse_view_args(args: impl Iterator<Item = String>) -> Invocation {
     let mut size: Option<(u16, u16)> = None;
     let mut frames: u32 = 1;
     let mut scene: Option<PathBuf> = None;
+    let mut kind = RenderKind::default();
+    let mut shading = ShadingMode::default();
+    let mut color = ColorMode::default();
 
     let mut args = args.peekable();
     while let Some(arg) = args.next() {
@@ -67,6 +77,22 @@ fn parse_view_args(args: impl Iterator<Item = String>) -> Invocation {
             "--frames" => match args.next().and_then(|n| n.parse().ok()) {
                 Some(n) if n > 0 => frames = n,
                 _ => return usage("--frames expects a positive integer"),
+            },
+            "--render" => match args.next().as_deref() {
+                Some("solid") => kind = RenderKind::Solid,
+                Some("wireframe") => kind = RenderKind::Wireframe,
+                _ => return usage("--render expects 'solid' or 'wireframe'"),
+            },
+            "--shading" => match args.next().as_deref() {
+                Some("flat") => shading = ShadingMode::Flat,
+                Some("gouraud") => shading = ShadingMode::Gouraud,
+                _ => return usage("--shading expects 'flat' or 'gouraud'"),
+            },
+            "--mode" => match args.next().as_deref() {
+                Some("ascii") => color = ColorMode::Ascii,
+                Some("truecolor") => color = ColorMode::Truecolor,
+                Some("halfblock") => color = ColorMode::HalfBlock,
+                _ => return usage("--mode expects 'ascii', 'truecolor', or 'halfblock'"),
             },
             flag if flag.starts_with('-') => {
                 return usage(format!("unknown argument '{flag}'"));
@@ -82,6 +108,9 @@ fn parse_view_args(args: impl Iterator<Item = String>) -> Invocation {
             headless,
             size,
             frames,
+            kind,
+            shading,
+            color,
         }),
         None => usage("view: missing path to an .obj scene"),
     }
@@ -124,26 +153,35 @@ pub fn run(invocation: Invocation) -> ExitCode {
     }
 }
 
+/// Build the [`FrameSpec`] for a view, given the resolved cell-grid size.
+fn frame_spec(opts: &ViewOptions, width: u16, height: u16) -> FrameSpec {
+    FrameSpec {
+        kind: opts.kind,
+        shading: opts.shading,
+        color: opts.color,
+        width,
+        height,
+    }
+}
+
 fn view(opts: &ViewOptions) -> Result<(), Box<dyn std::error::Error>> {
     let mesh = tte_core::load_obj(&opts.scene)?;
     if opts.headless {
-        // FR-1.8: plain text, no ANSI, deterministic. Frame i uses the same
+        // FR-1.8 / FR-2.9: deterministic frame dump. Frame i uses the same
         // rotation step as interactive frame i.
         let (width, height) = opts.size.unwrap_or((80, 24));
-        let camera = Camera::default();
+        let spec = frame_spec(opts, width, height);
         let stdout = std::io::stdout();
         let mut out = std::io::BufWriter::new(stdout.lock());
-        for i in 0..u64::from(opts.frames) {
-            let frame =
-                render_wireframe(&mesh, interactive::step_rotation(i), &camera, width, height);
-            use std::io::Write;
-            write!(out, "{frame}")?;
-        }
         use std::io::Write;
+        for i in 0..u64::from(opts.frames) {
+            let rendered = frame::render(&mesh, interactive::step_rotation(i), spec);
+            write!(out, "{}", rendered.headless_text())?;
+        }
         out.flush()?;
         Ok(())
     } else {
-        Ok(interactive::run(&mesh)?)
+        Ok(interactive::run(&mesh, opts)?)
     }
 }
 
@@ -152,11 +190,14 @@ pub fn help_text() -> String {
     "tte — text-encoded 3D rendering engine\n\
      \n\
      USAGE:\n\
-     \x20   tte view [OPTIONS] <scene.obj>    View a model as a spinning wireframe\n\
+     \x20   tte view [OPTIONS] <scene.obj>    View a model as a spinning solid\n\
      \x20   tte [OPTIONS]\n\
      \n\
      VIEW OPTIONS:\n\
-     \x20   --headless       Dump frames as plain text to stdout (no terminal control)\n\
+     \x20   --render KIND    solid (default) or wireframe\n\
+     \x20   --shading MODE   flat (default) or gouraud (solid only)\n\
+     \x20   --mode OUTPUT    ascii (default), truecolor, or halfblock (solid only)\n\
+     \x20   --headless       Dump frames to stdout (no terminal control)\n\
      \x20   --size WxH       Cell grid size (default: terminal size, or 80x24 headless)\n\
      \x20   --frames N       Number of frames to dump in headless mode (default: 1)\n\
      \n\
@@ -203,6 +244,12 @@ mod tests {
             "100x30",
             "--frames",
             "5",
+            "--render",
+            "solid",
+            "--shading",
+            "gouraud",
+            "--mode",
+            "truecolor",
             "cube.obj",
         ]);
         assert_eq!(
@@ -212,12 +259,15 @@ mod tests {
                 headless: true,
                 size: Some((100, 30)),
                 frames: 5,
+                kind: RenderKind::Solid,
+                shading: ShadingMode::Gouraud,
+                color: ColorMode::Truecolor,
             })
         );
     }
 
     #[test]
-    fn fr1_8_view_defaults_are_interactive_one_frame_terminal_size() {
+    fn fr2_9_view_defaults_are_interactive_solid_flat_ascii() {
         let inv = parse(&["view", "cube.obj"]);
         assert_eq!(
             inv,
@@ -226,8 +276,25 @@ mod tests {
                 headless: false,
                 size: None,
                 frames: 1,
+                kind: RenderKind::Solid,
+                shading: ShadingMode::Flat,
+                color: ColorMode::Ascii,
             })
         );
+    }
+
+    #[test]
+    fn fr2_9_bad_enum_values_are_usage_errors() {
+        for bad in [
+            &["view", "--render", "fancy", "c.obj"][..],
+            &["view", "--shading", "phong", "c.obj"][..],
+            &["view", "--mode", "sixel", "c.obj"][..],
+        ] {
+            assert!(
+                matches!(parse(bad), Invocation::Usage(_)),
+                "expected usage error for {bad:?}"
+            );
+        }
     }
 
     #[test]

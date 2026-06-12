@@ -2,12 +2,12 @@
 //! guaranteed terminal restore.
 
 use crate::ROTATION_STEP_RAD;
-use crate::present;
+use crate::{ViewOptions, frame, present};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal;
 use std::io::Write;
 use std::time::{Duration, Instant};
-use tte_core::{Camera, Mat4, Mesh, render_wireframe};
+use tte_core::{Mat4, Mesh};
 
 /// Target frame rate. 30 FPS is the portable floor identified in
 /// docs/research/02-ascii-terminal-rendering.md §5.
@@ -47,19 +47,25 @@ pub fn is_quit_key(key: &KeyEvent) -> bool {
 }
 
 /// Run the interactive viewer until the user quits. Frame size follows the
-/// terminal; the camera is the canonical default.
-pub fn run(mesh: &Mesh) -> std::io::Result<()> {
+/// terminal; render kind/shading/color come from `opts` (FR-2.9).
+pub fn run(mesh: &Mesh, opts: &ViewOptions) -> std::io::Result<()> {
     let mut out = std::io::BufWriter::new(std::io::stdout());
     let _guard = TerminalGuard::enter(&mut out)?;
-    let camera = Camera::default();
     let frame_budget = Duration::from_micros(1_000_000 / TARGET_FPS);
 
     let mut frame_index: u64 = 0;
     loop {
         let frame_start = Instant::now();
         let (width, height) = terminal::size().unwrap_or((80, 24));
-        let frame = render_wireframe(mesh, step_rotation(frame_index), &camera, width, height);
-        present::present_frame(&mut out, &frame)?;
+        let spec = frame::FrameSpec {
+            kind: opts.kind,
+            shading: opts.shading,
+            color: opts.color,
+            width,
+            height,
+        };
+        let rendered = frame::render(mesh, step_rotation(frame_index), spec);
+        present::present_lines(&mut out, &rendered.lines, rendered.reset)?;
         frame_index += 1;
 
         // Spend the rest of the frame budget polling for input; this is also

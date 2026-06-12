@@ -6,7 +6,7 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use tte_core::{Camera, Mat4, Mesh, Vec3, render_wireframe};
+use tte_core::{Camera, Mat4, Mesh, ShadeOptions, Vec3, render_solid, render_wireframe};
 
 /// Procedural UV-sphere: `rings`×`segments` quads → 2·rings·segments triangles.
 /// (16×32 ≈ 1024 triangles — the NFR-3 reference size.)
@@ -56,5 +56,16 @@ fn bench_wireframe(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_wireframe);
+/// NFR-3 (ext): solid shaded render of a ~1k-triangle model at 200×50.
+fn bench_solid(c: &mut Criterion) {
+    let camera = Camera::default();
+    let model = Mat4::rotation_y(0.6) * Mat4::rotation_x(0.4);
+    let sphere = uv_sphere(16, 32);
+    let opts = ShadeOptions::default();
+    c.bench_function("solid_1k_tri_sphere_200x50", |b| {
+        b.iter(|| render_solid(black_box(&sphere), model, &camera, 200, 50, opts))
+    });
+}
+
+criterion_group!(benches, bench_wireframe, bench_solid);
 criterion_main!(benches);

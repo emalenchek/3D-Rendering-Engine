@@ -5,14 +5,18 @@ A high-performance 3D rendering engine, text-encoded in both directions:
 - **Text in** — scenes described in a small, human-writable declarative DSL
 - **Text out** — a from-scratch software rasterizer presenting frames as ASCII/Unicode + ANSI color in the terminal (browser/WASM frontend planned)
 
-Currently in **Phase 1** (terminal wireframe renderer) — environment staged, test harness wired, requirements specified.
+Currently in **Phase 2 complete** (solid shaded renderer) — loads OBJ models and renders
+them as solid, depth-tested, diffuse-shaded surfaces in the terminal across ASCII, truecolor,
+and half-block output modes.
 
 ## Quick start
 
 ```sh
 # prerequisite: rustup (https://rustup.rs) — the pinned toolchain auto-installs
-cargo run -p tte-cli -- --help   # run the CLI
-cargo test                        # full test suite (unit + e2e + doctests)
+cargo run -p tte-cli -- --help                                   # CLI usage
+cargo run -p tte-cli -- view crates/tte-core/tests/data/cube.obj # spin a shaded cube
+cargo run -p tte-cli -- view --mode truecolor <model.obj>        # 24-bit color
+cargo test                                                       # full test suite
 ```
 
 Full setup guide: [docs/03-dev-setup.md](docs/03-dev-setup.md)
