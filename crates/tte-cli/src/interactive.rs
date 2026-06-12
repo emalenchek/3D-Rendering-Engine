@@ -1,12 +1,52 @@
 //! Interactive orbit viewer (FR-3.4, FR-3.5): per-frame render at the current
 //! terminal size, orbit-camera key controls, guaranteed terminal restore.
 
+use crate::subject::{self, Subject};
 use crate::{ROTATION_STEP_RAD, ViewOptions, frame, present};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal;
 use std::io::Write;
-use std::time::{Duration, Instant};
-use tte_core::{Mat4, Mesh, OrbitCamera};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
+use tte_core::{Mat4, OrbitCamera};
+
+/// Watches a scene file's modification time and hot-reloads it on change
+/// (FR-4.8). For non-scene subjects (`.obj`) or when the file can't be stat'd,
+/// `poll` simply never reloads. A reload that fails to parse is ignored (the
+/// previous good scene keeps showing).
+struct ReloadWatch {
+    path: PathBuf,
+    enabled: bool,
+    last_modified: Option<SystemTime>,
+}
+
+impl ReloadWatch {
+    fn new(path: &Path, subject: &Subject) -> Self {
+        let enabled = matches!(subject, Subject::Scene { .. });
+        Self {
+            path: path.to_path_buf(),
+            enabled,
+            last_modified: modified_time(path),
+        }
+    }
+
+    /// Returns a freshly reloaded subject if the file changed and reparsed.
+    fn poll(&mut self) -> Option<Subject> {
+        if !self.enabled {
+            return None;
+        }
+        let current = modified_time(&self.path);
+        if current != self.last_modified {
+            self.last_modified = current;
+            return subject::load(&self.path).ok();
+        }
+        None
+    }
+}
+
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
 
 /// Target frame rate. 30 FPS is the portable floor identified in
 /// docs/research/02-ascii-terminal-rendering.md §5.
@@ -85,10 +125,11 @@ pub fn handle_key(
     InputAction::Continue
 }
 
-/// Run the interactive viewer until the user quits. The model is static and the
-/// camera orbits it (auto-orbit on by default); the frame follows the terminal
-/// size every iteration so resizes are reflected immediately (FR-3.4).
-pub fn run(mesh: &Mesh, opts: &ViewOptions) -> std::io::Result<()> {
+/// Run the interactive viewer until the user quits. The subject is static and
+/// the camera orbits it (auto-orbit on by default); the frame follows the
+/// terminal size every iteration so resizes are reflected immediately (FR-3.4).
+/// Scene files are watched for edits and hot-reloaded (FR-4.8).
+pub fn run(subject: &Subject, opts: &ViewOptions) -> std::io::Result<()> {
     let mut out = std::io::BufWriter::new(std::io::stdout());
     let _guard = TerminalGuard::enter(&mut out)?;
     let frame_budget = Duration::from_micros(1_000_000 / TARGET_FPS);
@@ -96,9 +137,15 @@ pub fn run(mesh: &Mesh, opts: &ViewOptions) -> std::io::Result<()> {
     let initial = opts.orbit.unwrap_or_default();
     let mut orbit = initial;
     let mut auto_orbit = true;
+    let mut reloaded;
+    // Hot-reload state for scene files: poll mtime, reparse on change (FR-4.8).
+    let mut watch = ReloadWatch::new(&opts.scene, subject);
 
     loop {
         let frame_start = Instant::now();
+        reloaded = watch.poll();
+        let subject = reloaded.as_ref().unwrap_or(subject);
+
         if auto_orbit {
             orbit.orbit(AUTO_ORBIT_STEP, 0.0);
         }
@@ -112,7 +159,14 @@ pub fn run(mesh: &Mesh, opts: &ViewOptions) -> std::io::Result<()> {
             width,
             height,
         };
-        let rendered = frame::render(mesh, Mat4::IDENTITY, spec);
+        // The orbit camera always drives interactively, so a scene can be
+        // navigated even if it declares its own camera.
+        let rendered = match subject {
+            Subject::Mesh(mesh) => frame::render(mesh, Mat4::IDENTITY, spec),
+            Subject::Scene { scene, assets } => {
+                frame::render_scene_frame(scene, spec, |p| assets.get(p).cloned())
+            }
+        };
         present::present_lines(&mut out, &rendered.lines, rendered.reset)?;
 
         // Spend the rest of the frame budget waiting for input; this is also the

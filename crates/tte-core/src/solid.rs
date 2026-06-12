@@ -9,6 +9,8 @@ use crate::color::Material;
 use crate::framebuffer::Framebuffer;
 use crate::math::{Mat4, Vec3, Vec4};
 use crate::mesh::Mesh;
+use crate::primitives;
+use crate::scene::{Geometry, Scene};
 use crate::shading::{DirectionalLight, ShadingMode};
 use crate::triangle::{self, Vertex};
 
@@ -33,11 +35,35 @@ pub fn render_solid(
     opts: ShadeOptions,
 ) -> Framebuffer {
     let mut fb = Framebuffer::new(width, height);
+    render_mesh_into(
+        &mut fb,
+        mesh,
+        model,
+        camera,
+        &opts.light,
+        opts.shading,
+        opts.material,
+    );
+    fb
+}
+
+/// Rasterize one mesh into an existing framebuffer (FR-4.5 building block). Lets
+/// a whole scene accumulate into one shared z-buffer.
+pub fn render_mesh_into(
+    fb: &mut Framebuffer,
+    mesh: &Mesh,
+    model: Mat4,
+    camera: &Camera,
+    light: &DirectionalLight,
+    shading: ShadingMode,
+    material: Material,
+) {
+    let (width, height) = (fb.width(), fb.height());
     let view_proj = camera.projection_matrix(width, height) * camera.view_matrix();
 
-    // World-space positions and normals (model has rotation only in Phase 1–2,
-    // so the linear part transforms normals correctly; non-uniform scale would
-    // need the inverse-transpose — deferred with the material system).
+    // World-space positions and normals. The model's linear part transforms
+    // normals correctly for rotation/uniform scale; non-uniform scale would
+    // need the inverse-transpose — deferred with the material system.
     let world_pos: Vec<Vec3> = mesh
         .positions
         .iter()
@@ -63,9 +89,9 @@ pub fn render_solid(
             continue;
         }
 
-        let intensity = |vertex_normal: Vec3, face_normal: Vec3| match opts.shading {
-            ShadingMode::Flat => opts.light.intensity(face_normal),
-            ShadingMode::Gouraud => opts.light.intensity(vertex_normal),
+        let intensity = |vertex_normal: Vec3, face_normal: Vec3| match shading {
+            ShadingMode::Flat => light.intensity(face_normal),
+            ShadingMode::Gouraud => light.intensity(vertex_normal),
         };
         let face_normal = face_normal(world_pos[ia], world_pos[ib], world_pos[ic]);
 
@@ -73,7 +99,45 @@ pub fn render_solid(
         let v1 = screen_vertex(cb, intensity(world_nrm[ib], face_normal), width, height);
         let v2 = screen_vertex(cc, intensity(world_nrm[ic], face_normal), width, height);
 
-        triangle::fill_triangle(&mut fb, v0, v1, v2, opts.material.base_color, true);
+        triangle::fill_triangle(fb, v0, v1, v2, material.base_color, true);
+    }
+}
+
+/// Render a whole [`Scene`] into one framebuffer (FR-4.5). Built-in primitives
+/// are baked here; external mesh references are resolved by `load_mesh` (so the
+/// core stays free of filesystem access — the CLI supplies the loader).
+pub fn render_scene<F>(
+    scene: &Scene,
+    camera: &Camera,
+    width: u16,
+    height: u16,
+    shading: ShadingMode,
+    mut load_mesh: F,
+) -> Framebuffer
+where
+    F: FnMut(&str) -> Option<Mesh>,
+{
+    let light = scene.light.to_light();
+    let mut fb = Framebuffer::with_background(width, height, scene.background);
+    for drawable in scene.flatten() {
+        let mesh = match &drawable.geometry {
+            Geometry::Cube => Some(primitives::cube()),
+            Geometry::Sphere { rings, segments } => Some(primitives::sphere(*rings, *segments)),
+            Geometry::Plane => Some(primitives::plane()),
+            Geometry::MeshRef(path) => load_mesh(path),
+            Geometry::Group => None,
+        };
+        if let Some(mesh) = mesh {
+            render_mesh_into(
+                &mut fb,
+                &mesh,
+                drawable.world,
+                camera,
+                &light,
+                shading,
+                drawable.material,
+            );
+        }
     }
     fb
 }

@@ -13,10 +13,12 @@
 pub mod frame;
 pub mod interactive;
 pub mod present;
+pub mod subject;
 
 use frame::{ColorMode, FrameSpec, RenderKind};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use subject::Subject;
 use tte_core::{Camera, OrbitCamera, PITCH_LIMIT, RADIUS_MAX, RADIUS_MIN, ShadingMode};
 
 /// Model spin per frame: 3° (a full turn every 120 frames / 4 s at 30 FPS).
@@ -195,24 +197,41 @@ fn frame_spec(opts: &ViewOptions, width: u16, height: u16) -> FrameSpec {
 }
 
 fn view(opts: &ViewOptions) -> Result<(), Box<dyn std::error::Error>> {
-    let mesh = tte_core::load_obj(&opts.scene)?;
+    let subject = subject::load(&opts.scene)?;
     if opts.headless {
-        // FR-1.8 / FR-2.9 / FR-3.3: deterministic frame dump. Frame i uses the
-        // same rotation step as interactive frame i; the camera is fixed.
-        let (width, height) = opts.size.unwrap_or((80, 24));
-        let spec = frame_spec(opts, width, height);
-        let stdout = std::io::stdout();
-        let mut out = std::io::BufWriter::new(stdout.lock());
-        use std::io::Write;
-        for i in 0..u64::from(opts.frames) {
-            let rendered = frame::render(&mesh, interactive::step_rotation(i), spec);
-            write!(out, "{}", rendered.headless_text())?;
-        }
-        out.flush()?;
-        Ok(())
+        headless_dump(&subject, opts)
     } else {
-        Ok(interactive::run(&mesh, opts)?)
+        Ok(interactive::run(&subject, opts)?)
     }
+}
+
+/// FR-1.8 / FR-2.9 / FR-3.3 / FR-4.6: deterministic frame dump. A mesh subject
+/// spins frame-to-frame; a scene is static (and uses its own camera unless an
+/// orbit flag overrides it).
+fn headless_dump(subject: &Subject, opts: &ViewOptions) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    let (width, height) = opts.size.unwrap_or((80, 24));
+    let spec = frame_spec(opts, width, height);
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    for i in 0..u64::from(opts.frames) {
+        let rendered = match subject {
+            Subject::Mesh(mesh) => frame::render(mesh, interactive::step_rotation(i), spec),
+            Subject::Scene { scene, assets } => {
+                let mut spec = spec;
+                // Scene's own camera wins unless an orbit flag was given.
+                if opts.orbit.is_none()
+                    && let Some(cam) = scene.camera
+                {
+                    spec.camera = cam.to_camera();
+                }
+                frame::render_scene_frame(scene, spec, |p| assets.get(p).cloned())
+            }
+        };
+        write!(out, "{}", rendered.headless_text())?;
+    }
+    out.flush()?;
+    Ok(())
 }
 
 /// Help text as a pure value so tests can snapshot it (see tests/e2e_cli.rs).
@@ -220,7 +239,7 @@ pub fn help_text() -> String {
     "tte — text-encoded 3D rendering engine\n\
      \n\
      USAGE:\n\
-     \x20   tte view [OPTIONS] <scene.obj>    Orbit a model interactively\n\
+     \x20   tte view [OPTIONS] <model.obj | scene.scene>   Orbit a model or scene\n\
      \x20   tte [OPTIONS]\n\
      \n\
      VIEW OPTIONS:\n\

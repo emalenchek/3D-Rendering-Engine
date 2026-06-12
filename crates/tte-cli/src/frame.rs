@@ -4,7 +4,10 @@
 //! paths can never drift (NFR-1). The result is a list of row strings (possibly
 //! carrying ANSI color) plus whether a trailing SGR reset is needed.
 
-use tte_core::{Camera, Mat4, ShadeOptions, ShadingMode, present, render_solid, render_wireframe};
+use tte_core::{
+    Camera, Framebuffer, Mat4, Mesh, Scene, ShadeOptions, ShadingMode, present, render_scene,
+    render_solid, render_wireframe,
+};
 
 /// Smallest cell grid we'll render into, so a tiny/odd terminal can't produce a
 /// zero-sized frame (FR-3.4).
@@ -66,50 +69,72 @@ impl RenderedFrame {
     }
 }
 
-/// Render `mesh` under `model` into display-ready rows.
-pub fn render(mesh: &tte_core::Mesh, model: Mat4, spec: FrameSpec) -> RenderedFrame {
-    let camera = spec.camera;
-    let FrameSpec { width, height, .. } = spec;
+/// Render a single `mesh` under `model` into display-ready rows.
+pub fn render(mesh: &Mesh, model: Mat4, spec: FrameSpec) -> RenderedFrame {
+    if spec.kind == RenderKind::Wireframe {
+        let cb = render_wireframe(mesh, model, &spec.camera, spec.width, spec.height);
+        return RenderedFrame {
+            lines: cb.rows().collect(),
+            reset: false,
+        };
+    }
+    let opts = ShadeOptions {
+        shading: spec.shading,
+        ..Default::default()
+    };
+    let fb = render_solid(
+        mesh,
+        model,
+        &spec.camera,
+        spec.width,
+        render_height(spec),
+        opts,
+    );
+    present_framebuffer(&fb, spec.color)
+}
 
-    match spec.kind {
-        RenderKind::Wireframe => {
-            let cb = render_wireframe(mesh, model, &camera, width, height);
-            RenderedFrame {
-                lines: cb.rows().collect(),
-                reset: false,
-            }
-        }
-        RenderKind::Solid => {
-            let opts = ShadeOptions {
-                shading: spec.shading,
-                ..Default::default()
-            };
-            match spec.color {
-                ColorMode::Ascii => {
-                    let fb = render_solid(mesh, model, &camera, width, height, opts);
-                    RenderedFrame {
-                        lines: present::ascii_ramp(&fb).rows().collect(),
-                        reset: false,
-                    }
-                }
-                ColorMode::Truecolor => {
-                    let fb = render_solid(mesh, model, &camera, width, height, opts);
-                    RenderedFrame {
-                        lines: ansi_lines(present::truecolor(&fb)),
-                        reset: true,
-                    }
-                }
-                ColorMode::HalfBlock => {
-                    // Half-block packs two framebuffer rows per cell row, so
-                    // render at double height (research D4).
-                    let fb = render_solid(mesh, model, &camera, width, height * 2, opts);
-                    RenderedFrame {
-                        lines: ansi_lines(present::half_block(&fb)),
-                        reset: true,
-                    }
-                }
-            }
-        }
+/// Render a whole [`Scene`] into display-ready rows (FR-4.5). Scenes are always
+/// solid; `load_mesh` resolves external mesh references. The camera in `spec`
+/// is used (the caller resolves the scene's own camera vs. an orbit override).
+pub fn render_scene_frame<F>(scene: &Scene, spec: FrameSpec, load_mesh: F) -> RenderedFrame
+where
+    F: FnMut(&str) -> Option<Mesh>,
+{
+    let fb = render_scene(
+        scene,
+        &spec.camera,
+        spec.width,
+        render_height(spec),
+        spec.shading,
+        load_mesh,
+    );
+    present_framebuffer(&fb, spec.color)
+}
+
+/// Half-block packs two framebuffer rows per cell row, so it renders at double
+/// height (research D4); other modes render one framebuffer row per cell.
+fn render_height(spec: FrameSpec) -> u16 {
+    match spec.color {
+        ColorMode::HalfBlock => spec.height.saturating_mul(2),
+        _ => spec.height,
+    }
+}
+
+/// Turn a rendered [`Framebuffer`] into display rows via the chosen presenter.
+fn present_framebuffer(fb: &Framebuffer, color: ColorMode) -> RenderedFrame {
+    match color {
+        ColorMode::Ascii => RenderedFrame {
+            lines: present::ascii_ramp(fb).rows().collect(),
+            reset: false,
+        },
+        ColorMode::Truecolor => RenderedFrame {
+            lines: ansi_lines(present::truecolor(fb)),
+            reset: true,
+        },
+        ColorMode::HalfBlock => RenderedFrame {
+            lines: ansi_lines(present::half_block(fb)),
+            reset: true,
+        },
     }
 }
 

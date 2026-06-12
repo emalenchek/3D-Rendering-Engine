@@ -5,22 +5,42 @@ A high-performance 3D rendering engine, text-encoded in both directions:
 - **Text in** — scenes described in a small, human-writable declarative DSL
 - **Text out** — a from-scratch software rasterizer presenting frames as ASCII/Unicode + ANSI color in the terminal (browser/WASM frontend planned)
 
-Currently in **Phase 3 complete** (interactive orbit) — loads OBJ models and renders them as
-solid, depth-tested, diffuse-shaded surfaces in the terminal (ASCII, truecolor, half-block),
-with a live orbit camera you drive from the keyboard.
+**MVP complete (Phases 1–4)** — text in, text out: render OBJ models *and* scenes described
+in a small text DSL as solid, depth-tested, diffuse-shaded frames in the terminal (ASCII,
+truecolor, or half-block), navigable with a live orbit camera.
 
 ## Quick start
 
 ```sh
 # prerequisite: rustup (https://rustup.rs) — the pinned toolchain auto-installs
-cargo run -p tte-cli -- --help                                   # CLI usage
-cargo run -p tte-cli -- view crates/tte-core/tests/data/cube.obj # orbit a shaded cube
-cargo run -p tte-cli -- view --mode truecolor <model.obj>        # 24-bit color
-cargo test                                                       # full test suite
+cargo run -p tte-cli -- --help                                       # CLI usage
+cargo run -p tte-cli -- view crates/tte-core/tests/data/cube.obj     # orbit a shaded model
+cargo run -p tte-cli -- view crates/tte-cli/tests/data/scene.scene   # orbit a DSL scene
+cargo run -p tte-cli -- view --mode truecolor <model.obj>            # 24-bit color
+cargo test                                                           # full test suite
 ```
 
 Interactive keys: **arrows / hjkl** orbit · **+ / −** zoom · **space** toggle auto-orbit ·
-**r** reset · **q** quit.
+**r** reset · **q** quit. Editing a `.scene` file while it's open hot-reloads it live.
+
+## Scene DSL ("text in")
+
+```kdl
+scene {
+    background color=(0 0 0)
+    material "red" base-color=(0.85 0.15 0.15)
+    camera position=(4 3 6) look-at=(0 0.5 0) fov=50
+    light direction=(-1 -2 -1) intensity=1.2 ambient=0.18
+
+    plane scale=(8 1 8)
+    sphere "ball" translate=(-1.5 0.6 0) material="red"
+    node "tower" translate=(0 0.5 -1.5) {
+        cube
+        cube translate=(0 1.1 0) scale=(0.7 0.7 0.7) material="red"
+    }
+    mesh src="teapot.obj" scale=0.5     // external OBJ, resolved next to the scene file
+}
+```
 
 Full setup guide: [docs/03-dev-setup.md](docs/03-dev-setup.md)
 

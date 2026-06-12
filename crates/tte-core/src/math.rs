@@ -138,6 +138,35 @@ impl Mat4 {
         out
     }
 
+    /// Rotation about the +Z axis by `angle` radians (right-hand rule).
+    pub fn rotation_z(angle: f32) -> Self {
+        let (s, c) = angle.sin_cos();
+        let mut out = Self::IDENTITY;
+        out.m[0][0] = c;
+        out.m[0][1] = -s;
+        out.m[1][0] = s;
+        out.m[1][1] = c;
+        out
+    }
+
+    /// Translation by `t`.
+    pub fn translation(t: Vec3) -> Self {
+        let mut out = Self::IDENTITY;
+        out.m[0][3] = t.x;
+        out.m[1][3] = t.y;
+        out.m[2][3] = t.z;
+        out
+    }
+
+    /// Non-uniform scale.
+    pub fn scale(s: Vec3) -> Self {
+        let mut out = Self::IDENTITY;
+        out.m[0][0] = s.x;
+        out.m[1][1] = s.y;
+        out.m[2][2] = s.z;
+        out
+    }
+
     /// Right-handed view matrix: world space → view space, camera at `eye`
     /// looking at `target`, looking down −Z.
     ///
@@ -247,6 +276,23 @@ mod tests {
     #[test]
     fn fr1_1_normalize_rejects_zero_vector() {
         assert_eq!(Vec3::ZERO.normalize(), None);
+    }
+
+    #[test]
+    fn fr4_2_trs_compose_translate_rotate_scale() {
+        // T*R*S applied to a point: scale, then rotate 90° about Y, then translate.
+        let m = Mat4::translation(Vec3::new(10.0, 0.0, 0.0))
+            * Mat4::rotation_y(std::f32::consts::FRAC_PI_2)
+            * Mat4::scale(Vec3::new(2.0, 1.0, 1.0));
+        let p = (m * Vec3::X.extend(1.0)).truncate();
+        // X scaled to 2, rotated +90° about Y → (0,0,-2), translated +10x.
+        assert_abs_diff_eq!(p, Vec3::new(10.0, 0.0, -2.0), epsilon = 1e-5);
+    }
+
+    #[test]
+    fn fr4_2_rotation_z_turns_x_toward_y() {
+        let p = (Mat4::rotation_z(std::f32::consts::FRAC_PI_2) * Vec3::X.extend(1.0)).truncate();
+        assert_abs_diff_eq!(p, Vec3::Y, epsilon = 1e-5);
     }
 
     #[test]
