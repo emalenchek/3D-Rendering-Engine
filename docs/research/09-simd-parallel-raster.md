@@ -1,0 +1,42 @@
+# Research 09: SIMD + Parallel Rasterization (spikes S3, partial S4)
+
+Date: 2026-06-12. Validates v2.0 Phase 6 (FR-6.1..6.5, NFR-10..12). Status: IN PROGRESS — findings appended incrementally.
+
+## Q1. Stable-Rust portable SIMD options (2025/2026)
+
+- **`wide` (Lokathor)**: mature, supports x86 SSE/AVX, NEON, **and wasm simd128**; fixed-width types (`f32x4`, `f32x8`, `i32x4`/`i32x8`) that lower to native instructions or scalar fallback. **No multiversioning** (compile-time feature detection only — you pick target features at build time, e.g. `RUSTFLAGS=-C target-feature=+simd128` for wasm). Source: Shnatsel, "The state of SIMD in Rust in 2025" (https://shnatsel.medium.com/the-state-of-simd-in-rust-in-2025-32c263e5f53d, summarized via search snippets; article itself blocks fetch). Confidence: HIGH (corroborated by crates.io/github listing https://github.com/Lokathor/wide).
+- **`pulp` (sarah-quinones / used by faer)**: higher-level, **built-in runtime multiversioning** (per-CPU dispatch), but operates on *native SIMD width* — your kernel must be generic over lane count; arch support per the 2025 state-of-SIMD article is **NEON, AVX2, AVX-512 only** (wasm simd128 support unclear/limited). Confidence: MEDIUM (snippet-level; verify against pulp docs below).
+- **`std::simd`**: still **nightly-only** (`#![feature(portable_simd)]`) as of the 2025 survey; not usable under our stable-Rust constraint. Confidence: MEDIUM-HIGH (to re-verify).
+- **`std::arch` intrinsics + `is_x86_feature_detected!`**: stable, fastest ceiling, but requires per-arch code (x86 SSE2/AVX2, aarch64 NEON, wasm `core::arch::wasm32` simd128 intrinsics) = 3 codepaths + scalar. High maintenance for a small kernel.
+- Preliminary verdict for our kernel: **`wide`** — fixed-width `i32x4`/`f32x4` matches a 4-pixel-span edge-function kernel exactly, compiles on all three targets (x86-64, aarch64, wasm32+simd128) from one code path, stable Rust, zero unsafe. Multiversioning loss is acceptable: SSE2 is baseline on x86-64, NEON baseline on aarch64, simd128 is a build flag on wasm. `pulp`'s variable-width model is awkward for a tiny 4/8-pixel raster kernel and wasm support is doubtful.
+
+## Context anchors (local)
+
+- FR-6.2 already names `wide`/`std::arch` (stable, not nightly std::simd); FR-6.3 = byte-identical output across feature combos; NFR-10 ≥3× parallel (8-core), NFR-11 ≥2× SIMD fill-stage; V5/V7: wasm ships scalar single-thread on stable, wasm-bindgen-rayon is a nightly stretch (FR-6.5).
+
+## Q1 (addendum). New contenders + verification (2026)
+
+- **`std::simd` still NIGHTLY in 2026.** No stabilization landed; `doc.rust-lang.org/std/simd` still gated on `#![feature(portable_simd)]` (tracking #86656). Confirms FR-6.2's choice to avoid it. Confidence: HIGH. (https://doc.rust-lang.org/std/simd/index.html, https://pythonspeed.com/articles/simd-stable-rust/)
+- **`fearless_simd` v0.2.0 (Linebender, Raph Levien)** — first release since 2018, portable SIMD across **WASM, aarch64, x86/x86_64** on stable; goal is a safe portable layer like a stable-Rust std::simd. New/young (0.2.x), API churn expected. Worth watching but too immature to bet a byte-identical golden-frame contract on in 2026. Confidence: MEDIUM. (https://linebender.org/blog/tmil-19/, state-of-SIMD 2025)
+- **`pulp`** — Linebender's sparse-strip renderers (vello_cpu) drove **strong WASM SIMD + NEON** support into pulp through 2025; multiversioning is real and proven (powers faer). BUT pulp's model is *native-width-generic* (you write lane-count-agnostic kernels), which is awkward for a tiny fixed 4/8-pixel edge-function kernel, and the "byte-identical across feature combos" contract is harder when the dispatched width varies at runtime (AVX2 8-wide vs SSE 4-wide vs simd128 4-wide could reorder reductions). Confidence: MEDIUM-HIGH.
+- **Verdict unchanged: `wide`.** Fixed-width `i32x4`/`f32x4` = one code path on all 3 targets, stable, no unsafe, and — critically — **fixed lane count means identical op order regardless of host CPU**, which is what the golden-frame contract needs. Multiversioning (pulp's edge) is irrelevant here: SSE2 baseline on x86-64, NEON baseline on aarch64, simd128 a build flag on wasm. Use `f32x4` only if needed; prefer **`i32x4` integer edge functions** (see Q3).
+
+## Q2. Canonical SIMD rasterization (Giesen) — verified
+
+Giesen "Optimizing the basic rasterizer" / "Triangle rasterization in practice" (fetched via rygorous/rygblog-src mirror; wordpress + medium 403 on fetch):
+- **Edge function is integer affine**: `orient2d(a,b,c) = (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x)`, i.e. `F(x,y)=A·x+B·y+C` with `A=(a.y-b.y)`, `B=(b.x-a.x)`, integer coefficients from (sub-pixel snapped) integer vertex coords.
+- **Incremental stepping**: stepping +1 px in x adds A; +1 px in y adds B. Per-pixel cost collapses from "2 mul + 5 sub per edge" to **3 integer adds** (one per edge). Full eval only once per triangle (or per tile corner).
+- **SIMD over a span**: broadcast A/B/C, init 4 (or 8) consecutive x lanes, step delta becomes `i32x4(A * 4)`. Loop body is unchanged vs scalar — "minimal code changes." Process 4/8 pixels per iteration.
+- **Masked depth write**: inside-test = sign bits of the 3 edge SIMD values OR'd; that mask AND'd with `z < zbuf` mask gives the write mask; blend/masked-store updates depth + color per lane (no scalar branch). 
+- **Speedups**: Giesen does not give a clean isolated multiplier in these posts (the full occlusion-culling series reports large cumulative gains from tiling+SIMD+threading together). krzosa rasterizer: inner loop fully vectorized AVX2/FMA, **8 px/iter**, color channels kept in separate registers (8 reds, etc.). Expect ~3–6× on the fill stage from 8-wide (less than 8× due to edge/partial tiles + memory). Confidence: HIGH on technique, MEDIUM on exact multiplier.
+
+## Q3. DETERMINISM — the decisive finding
+
+- **Float SIMD CAN diverge from scalar**: different association order in reductions, and **FMA contraction** (`a*b+c` fused → different rounding) produce non-bit-identical results. Rust does NOT auto-contract FMA in release by default for separate `*`/`+` (no `-ffast-math` equiv on stable), but `mul_add` and some autovectorization patterns can. So a *float* edge/barycentric SIMD path is a byte-identical liability.
+- **Integer edge functions make parity TRIVIAL** (and are Giesen's recommended approach). `orient2d` and incremental stepping are **pure i32/i64 arithmetic — exact, associative, platform-independent, no rounding**. A 4-lane `i32x4` edge evaluator produces *bit-for-bit* the same coverage mask as the scalar i32 path on x86, aarch64, and wasm. This makes FR-6.3 (byte-identical) essentially free for the *coverage* stage.
+- **Watertight as a bonus**: integer edge funcs + **top-left fill rule** (bias 0 for top/left edges, −1 otherwise) guarantee "every pixel covered by two non-overlapping triangles sharing an edge is lit once and only once" — no cracks/seams, no double-cover. This simultaneously fixes seams AND gives determinism. STRONG recommendation: move coverage to integer edge functions for v2.0.
+- **Intensity/z interpolation**: barycentric weights derived from the same integer edge values (`w_i = F_i / area`). If intensity/z stay **float**, keep the *exact same scalar op sequence* in the SIMD lanes (same divides, same multiply order, NO `mul_add`/FMA) so each lane reproduces the scalar bit pattern. Alternative: fixed-point interpolation = trivially identical but needs care on z precision. Verdict: integer coverage + carefully-ordered non-FMA float interpolation = byte-identical achievable; FR-6.3 is FEASIBLE. Confidence: HIGH.
+
+Sources: https://github.com/rygorous/rygblog-src/blob/master/posts/optimizing-the-basic-rasterizer.md , https://raw.githubusercontent.com/rygorous/rygblog-src/master/posts/triangle-rasterization-in-practice.md , https://github.com/krzosa/software_rasterizer
+
+(further sections appended below as research proceeds)
