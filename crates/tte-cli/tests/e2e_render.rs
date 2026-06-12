@@ -44,6 +44,41 @@ fn fr1_8_headless_wireframe_frame_matches_golden() {
 }
 
 #[test]
+fn fr3_3_headless_orbit_view_matches_golden() {
+    // A specific orbit angle renders a deterministic, reproducible frame.
+    let text = stdout_of(&[
+        "view",
+        "--headless",
+        "--yaw",
+        "120",
+        "--pitch",
+        "20",
+        "--radius",
+        "7",
+        "--size",
+        "80x24",
+        &cube_path(),
+    ]);
+    insta::assert_snapshot!("headless_orbit_yaw120_pitch20_r7_80x24", text);
+}
+
+#[test]
+fn fr3_3_headless_orbit_is_deterministic_across_runs() {
+    let args = &[
+        "view",
+        "--headless",
+        "--yaw",
+        "45",
+        "--radius",
+        "6",
+        "--size",
+        "60x20",
+        &cube_path(),
+    ];
+    assert_eq!(stdout_of(args), stdout_of(args));
+}
+
+#[test]
 fn fr2_9_headless_solid_ascii_frame_matches_golden() {
     let text = stdout_of(&[
         "view",
@@ -200,4 +235,25 @@ fn fr1_7_interactive_quits_on_q() {
     session
         .expect(expectrl::Eof)
         .expect("process should exit after 'q'");
+}
+
+/// FR-3.5 PTY smoke test: orbit the camera with several keys, toggle auto-orbit,
+/// reset, then quit — the live loop must keep running through input and exit
+/// cleanly. `#[ignore]`d (needs a PTY); run with `cargo test -- --ignored`.
+#[cfg(unix)]
+#[test]
+#[ignore = "requires a PTY; run explicitly with --ignored"]
+fn fr3_5_interactive_orbits_then_quits() {
+    let bin = assert_cmd::cargo::cargo_bin("tte");
+    let mut session =
+        expectrl::spawn(format!("{} view {}", bin.display(), cube_path())).expect("spawn in PTY");
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    for key in ["h", "j", "k", "l", "+", "-", " ", "r"] {
+        session.send(key).expect("send orbit key");
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    session.send("q").expect("send quit key");
+    session
+        .expect(expectrl::Eof)
+        .expect("process should exit after orbiting + 'q'");
 }

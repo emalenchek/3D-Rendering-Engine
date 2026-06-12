@@ -6,6 +6,15 @@
 
 use tte_core::{Camera, Mat4, ShadeOptions, ShadingMode, present, render_solid, render_wireframe};
 
+/// Smallest cell grid we'll render into, so a tiny/odd terminal can't produce a
+/// zero-sized frame (FR-3.4).
+pub const MIN_DIM: u16 = 4;
+
+/// Clamp a reported terminal size to something renderable (FR-3.4).
+pub fn clamp_dims(width: u16, height: u16) -> (u16, u16) {
+    (width.max(MIN_DIM), height.max(MIN_DIM))
+}
+
 /// Wireframe vs solid surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RenderKind {
@@ -32,6 +41,7 @@ pub struct FrameSpec {
     pub kind: RenderKind,
     pub shading: ShadingMode,
     pub color: ColorMode,
+    pub camera: Camera,
     pub width: u16,
     pub height: u16,
 }
@@ -58,7 +68,7 @@ impl RenderedFrame {
 
 /// Render `mesh` under `model` into display-ready rows.
 pub fn render(mesh: &tte_core::Mesh, model: Mat4, spec: FrameSpec) -> RenderedFrame {
-    let camera = Camera::default();
+    let camera = spec.camera;
     let FrameSpec { width, height, .. } = spec;
 
     match spec.kind {
@@ -127,9 +137,17 @@ mod tests {
             kind,
             shading: ShadingMode::Flat,
             color,
+            camera: Camera::default(),
             width: 40,
             height: 20,
         }
+    }
+
+    #[test]
+    fn fr3_4_clamp_dims_enforces_minimum() {
+        assert_eq!(clamp_dims(0, 0), (MIN_DIM, MIN_DIM));
+        assert_eq!(clamp_dims(1, 2), (MIN_DIM, MIN_DIM));
+        assert_eq!(clamp_dims(80, 24), (80, 24));
     }
 
     #[test]

@@ -79,7 +79,22 @@ universal ASCII luminance ramp to truecolor half-block "pixels".
 | NFR-6 | Truecolor/half-block output ends with an SGR reset (`\x1b[0m`) and emits no color code for a cell whose color equals the previous cell (byte-level run-merging) | presenter unit tests |
 | NFR-3 (ext) | Solid shaded render of a ≤1k-triangle model at 200×50 stays within the ≤5 ms/frame bound | criterion bench |
 
+## 3b. Phase 3 — Interactive orbit camera
 
+**Deliverable:** `tte view` lets the user orbit the camera around the model in real
+time — rotate with arrows / hjkl, zoom with +/−, toggle auto-orbit, reset — and the
+view tracks terminal resizes. Headless gains `--yaw/--pitch/--radius` so any orbit view
+is reproducible for tests.
+
+| ID | Requirement |
+|---|---|
+| FR-3.1 | `OrbitCamera` in core: spherical state (yaw, pitch, radius, target) → eye position; produces a `Camera`. Pitch clamped to just under ±90°; radius clamped to a sane range. Pure/deterministic. |
+| FR-3.2 | Orbit mutations: `orbit(dyaw, dpitch)` (pitch clamped) and `dolly(factor)` (radius clamped); eye is always exactly `radius` from `target`. |
+| FR-3.3 | Headless orbit flags `--yaw DEG --pitch DEG --radius F` render a deterministic, reproducible view (golden-frame e2e). |
+| FR-3.4 | Live resize: the interactive loop renders at the current terminal size every frame, so a resize shows on the next frame; size clamped to a usable minimum. |
+| FR-3.5 | Interactive controls: arrows/hjkl orbit, +/=/i zoom in, −/o zoom out, space toggles auto-orbit, r resets, q/Esc/Ctrl-C quit. Key→action mapping is pure + unit-tested; the live loop is covered by a PTY smoke test. |
+
+## 4. Test plan (requirement → tests)
 
 Status values: ✅ passing · 🚧 planned (test to be written with the feature).
 
@@ -105,6 +120,11 @@ Status values: ✅ passing · 🚧 planned (test to be written with the feature)
 | FR-2.7 | Unit + E2E | `fr2_7_*`/`nfr6_*` (`present.rs`); `fr2_9_truecolor_*` (e2e) | ✅ |
 | FR-2.8 | Unit + E2E | `fr2_8_*` (`present.rs`: row pairing, odd-height bg); `fr2_9_halfblock_*` (e2e) | ✅ |
 | FR-2.9 | Unit + E2E + golden | `fr2_9_*`: flag parsing + frame builder (`tte-cli/src/lib.rs`, `frame.rs`); solid/gouraud golden frames + truecolor/halfblock structure (e2e) | ✅ |
+| FR-3.1 | Unit | `fr3_1_*` in `tte-core/src/camera.rs`: eye on +Z at zero angles, eye always `radius` from target, default matches canonical framing | ✅ |
+| FR-3.2 | Unit | `fr3_2_*` in `tte-core/src/camera.rs`: pitch clamp at ±limit, dolly radius clamp | ✅ |
+| FR-3.3 | Unit + E2E + golden | `fr3_3_*`: orbit-flag parsing + pitch clamp + bad-value errors (`lib.rs`); orbit golden frame + cross-run determinism (`tte-cli/tests/e2e_render.rs`) | ✅ |
+| FR-3.4 | Unit | `fr3_4_clamp_dims_enforces_minimum` — `tte-cli/src/frame.rs`; loop re-renders at `terminal::size()` each frame | ✅ |
+| FR-3.5 | Unit + PTY | `fr3_5_*` key→action mapping (`tte-cli/src/interactive.rs`); `fr3_5_interactive_orbits_then_quits` (`expectrl`, `#[ignore]`, unix) | ✅ |
 | NFR-1 | Integration + E2E | `nfr1_*`: double-render equality (wireframe + solid, lib) + byte-identical repeated CLI runs (e2e) | ✅ |
 | NFR-2 | CI | test job matrix: ubuntu/macos/windows | ✅ |
 | NFR-3 | Bench | `benches/raster.rs` (criterion): wireframe 1k-tri@200×50 ≈ 143 µs, solid ≈ 111 µs — ≥35× inside the ≤5 ms bound (2026-06, CI-class hardware) | ✅ |
