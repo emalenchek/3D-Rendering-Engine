@@ -12,11 +12,17 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+# Regular (not dev) dependency so the AbsDiffEq/RelativeEq impls on Vec3/Mat4
+# are visible to integration tests and downstream crates. Tiny, zero transitive
+# deps. See docs/02-test-harness.md §5.
+approx = "0.5"
 
 [dev-dependencies]
 # Test stack — see docs/02-test-harness.md for the rationale behind each.
-# (Benchmark deps + [[bench]] target are added in the test-harness step,
-# pending the criterion-vs-divan decision from the testing research.)
-approx = "0.5"          # float-tolerant assertions for rasterizer/math tests
 insta = "1"             # golden-frame snapshot testing of rendered cell buffers
 proptest = "1"          # property-based tests for math invariants & parser round-trips
+criterion = "0.5"       # statistical benchmarks (NFR-3); cargo bench
+
+[[bench]]
+name = "raster"
+harness = false         # criterion provides the harness (#[bench] is nightly-only)

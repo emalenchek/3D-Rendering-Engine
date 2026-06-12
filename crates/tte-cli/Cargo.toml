@@ -17,9 +17,15 @@ workspace = true
 
 [dependencies]
 tte-core.workspace = true
+# Cross-platform terminal control (raw mode, alternate screen, key events).
+# Chosen in docs/research/04-language-evaluation.md (best-in-class, Windows ✓).
+crossterm = "0.29"
 
 [dev-dependencies]
 # End-to-end CLI testing — see docs/02-test-harness.md.
 assert_cmd = "2"        # build & run the `tte` binary, assert on stdout/exit code
 predicates = "3"        # composable assertions for assert_cmd output
 insta = "1"             # golden snapshots of CLI output (frames, --help)
+
+[target.'cfg(unix)'.dev-dependencies]
+expectrl = "0.7"        # PTY-driven smoke test of the interactive path (#[ignore]d)

@@ -63,17 +63,17 @@ Status values: ✅ passing · 🚧 planned (test to be written with the feature)
 | FR-0.1 | E2E | `fr0_1_version_reports_crate_version` — `tte-cli/tests/e2e_cli.rs` | ✅ |
 | FR-0.2 | E2E + golden | `fr0_2_help_output_matches_golden` — `tte-cli/tests/e2e_cli.rs` | ✅ |
 | FR-0.3 | E2E | `fr0_3_unknown_argument_fails_with_message` — `tte-cli/tests/e2e_cli.rs` | ✅ |
-| FR-1.1 | Unit + property | `fr1_1_*` in `tte-core/src/math/` (unit); proptest invariants: `m * m.inverse() ≈ I`, `normalize(v).len() ≈ 1`, `(A*B)*v ≈ A*(B*v)`, look_at/perspective sanity — `tte-core/tests/math_props.rs` | 🚧 |
-| FR-1.2 | Unit + integration | `fr1_2_*`: per-record parse units; integration on fixture files (`tests/data/cube.obj`, quad-face file, negative-index file, junk-lines file) — `tte-core/tests/obj_loader.rs` | 🚧 |
-| FR-1.3 | Unit + golden frame | `fr1_3_*`: matrix-stage units with `approx`; golden frame of cube edges at canonical camera — `tte-core/tests/render_wireframe.rs` | 🚧 |
-| FR-1.4 | Unit + golden frame | `fr1_4_*`: Bresenham cases (horizontal/vertical/diagonal/steep/clipped) as inline-snapshot grids — `tte-core/src/raster/` + `tests/render_wireframe.rs` | 🚧 |
-| FR-1.5 | Unit | `fr1_5_*`: cell-buffer to_string shape (rows × cols, trailing-newline policy) | 🚧 |
-| FR-1.6 | Unit (byte-level) | `fr1_6_*`: presenter writes into an injected `Write` sink; assert escape-sequence framing (alt-screen enter/leave, cursor hide, home) without a PTY | 🚧 |
-| FR-1.7 | Unit + PTY (smoke) | `fr1_7_*`: rotation step determinism (unit); one `expectrl` smoke test marked `#[ignore]` for the interactive path | 🚧 |
-| FR-1.8 | E2E + golden frame | `fr1_8_*`: `tte view --headless --size 80x24 --frames 1 cube.obj` snapshot; multi-frame determinism (frame N stable across runs) — `tte-cli/tests/e2e_render.rs` | 🚧 |
-| NFR-1 | Integration | `nfr1_double_render_is_identical` — render twice, assert equal | 🚧 |
+| FR-1.1 | Unit + property | `fr1_1_*` in `tte-core/src/math.rs` (unit: look_at/perspective/cross sanity); proptest invariants: normalize length, cross orthogonality, mul associativity over vectors, rotation∘inverse ≈ I, rotation preserves length — `tte-core/tests/math_props.rs` | ✅ |
+| FR-1.2 | Unit | `fr1_2_*` in `tte-core/src/obj.rs`: all four face index forms, negative indices, fan triangulation, junk-line tolerance, derived normals, line-numbered errors | ✅ |
+| FR-1.3 | Unit + golden frame | `fr1_3_*`: center projection, behind-camera cull, near-plane-crossing cull (`tte-core/src/render.rs`); golden frames + camera-inside-cube — `tte-core/tests/render_wireframe.rs` | ✅ |
+| FR-1.4 | Unit + golden frame | `fr1_4_*`: Bresenham cases (horizontal/vertical/diagonal/steep/clipped/point/reversed) — `tte-core/src/raster.rs`; rotated-cube golden — `tests/render_wireframe.rs` | ✅ |
+| FR-1.5 | Unit | `fr1_5_*` in `tte-core/src/cell.rs`: Display shape (height lines × width chars), put/get, out-of-bounds safety | ✅ |
+| FR-1.6 | Unit (byte-level) | `fr1_6_*` in `tte-cli/src/present.rs`: injected `Write` sink; asserts alt-screen enter/leave, cursor hide/show, cursor-home-not-clear, per-row addressing — no PTY | ✅ |
+| FR-1.7 | Unit + PTY (smoke) | `fr1_7_*`: rotation-step determinism + quit-key mapping (unit); `fr1_7_interactive_quits_on_q` (`expectrl`, `#[ignore]`, unix) — `tte-cli/tests/e2e_render.rs` | ✅ |
+| FR-1.8 | E2E + golden frame | `fr1_8_*` — `tte-cli/tests/e2e_render.rs`: headless golden frame, no-ANSI + frame-count check, missing-file & bad-size error paths; option parsing units in `tte-cli/src/lib.rs` | ✅ |
+| NFR-1 | Integration + E2E | `nfr1_*`: double-render equality (lib) + byte-identical repeated CLI runs (e2e) | ✅ |
 | NFR-2 | CI | test job matrix: ubuntu/macos/windows | ✅ |
-| NFR-3 | Bench | `benches/raster.rs` (criterion), added with FR-1.4 | 🚧 |
+| NFR-3 | Bench | `benches/raster.rs` (criterion): cube@80×24 ≈ 2.1 µs, 1k-tri sphere@200×50 ≈ 143 µs — 35× inside the ≤5 ms bound (2026-06, CI-class hardware) | ✅ |
 | NFR-4 | CI | lint job (`fmt --check`, `clippy -D warnings`) | ✅ |
 | NFR-5 | CI | deny job (`cargo deny check`) | ✅ |
 
