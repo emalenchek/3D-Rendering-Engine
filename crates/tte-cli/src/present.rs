@@ -23,15 +23,25 @@ pub fn leave(out: &mut impl Write) -> std::io::Result<()> {
     out.flush()
 }
 
-/// Draw one frame: cursor-home, overwrite every row in place, single flush.
-/// In raw mode `\n` does not return the carriage, so each row is addressed
-/// with an explicit `MoveTo`.
-pub fn present_frame(out: &mut impl Write, frame: &CellBuffer) -> std::io::Result<()> {
+/// Draw one frame given its already-rendered lines (which may contain ANSI
+/// color codes): cursor-home, overwrite every row in place, single flush. In
+/// raw mode `\n` does not return the carriage, so each row is addressed with an
+/// explicit `MoveTo`. `reset` appends an SGR reset for colored modes.
+pub fn present_lines(out: &mut impl Write, lines: &[String], reset: bool) -> std::io::Result<()> {
     queue!(out, cursor::MoveTo(0, 0))?;
-    for (y, row) in frame.rows().enumerate() {
-        queue!(out, cursor::MoveTo(0, y as u16), Print(row))?;
+    for (y, line) in lines.iter().enumerate() {
+        queue!(out, cursor::MoveTo(0, y as u16), Print(line))?;
+    }
+    if reset {
+        queue!(out, Print("\x1b[0m"))?;
     }
     out.flush()
+}
+
+/// Convenience: present a plain [`CellBuffer`] (no color, no reset).
+pub fn present_frame(out: &mut impl Write, frame: &CellBuffer) -> std::io::Result<()> {
+    let lines: Vec<String> = frame.rows().collect();
+    present_lines(out, &lines, false)
 }
 
 #[cfg(test)]

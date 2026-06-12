@@ -5,11 +5,14 @@ expression: "String::from_utf8(out).unwrap()"
 tte — text-encoded 3D rendering engine
 
 USAGE:
-    tte view [OPTIONS] <scene.obj>    View a model as a spinning wireframe
+    tte view [OPTIONS] <scene.obj>    View a model as a spinning solid
     tte [OPTIONS]
 
 VIEW OPTIONS:
-    --headless       Dump frames as plain text to stdout (no terminal control)
+    --render KIND    solid (default) or wireframe
+    --shading MODE   flat (default) or gouraud (solid only)
+    --mode OUTPUT    ascii (default), truecolor, or halfblock (solid only)
+    --headless       Dump frames to stdout (no terminal control)
     --size WxH       Cell grid size (default: terminal size, or 80x24 headless)
     --frames N       Number of frames to dump in headless mode (default: 1)
 

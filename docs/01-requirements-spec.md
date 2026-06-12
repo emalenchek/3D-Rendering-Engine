@@ -54,7 +54,32 @@ terminal; `tte view --headless --size WxH --frames N model.obj` dumps frames as 
 | NFR-4 | Code health: rustfmt-clean, clippy-clean (`-D warnings` in CI), no `unsafe` without justification | CI lint gate + workspace lint config |
 | NFR-5 | Dependency hygiene: no known advisories; licenses within the allow-list | `cargo deny` CI gate |
 
-## 4. Test plan (requirement → tests)
+## 3a. Phase 2 — Solid shaded renderer
+
+**Deliverable:** `tte view` renders models as solid, depth-correct, diffuse-shaded
+surfaces (not just wireframes), selectable across output fidelities — from a
+universal ASCII luminance ramp to truecolor half-block "pixels".
+
+| ID | Requirement |
+|---|---|
+| FR-2.1 | `Rgb` color type (8-bit channels) with a perceptual `luminance()` and intensity scaling; `Material` carrying a base color |
+| FR-2.2 | `Framebuffer`: width×height grid of (depth, `Rgb`) with a depth-tested `plot` — a fragment is written only if nearer than what's there (z-buffer; no triangle sorting) |
+| FR-2.3 | Edge-function triangle rasterization: bounding-box scan, barycentric coverage (inclusive → gap-free for shared edges); back-face culling via signed area. (Exact single-coverage top-left rule deferred to Phase 5 hardening — harmless under a z-buffer.) |
+| FR-2.4 | Depth interpolated across each triangle (1/w-linear) and used for the z-test, resolving visibility correctly for overlapping geometry |
+| FR-2.5 | Diffuse (Lambert) shading from one directional light + ambient term, in two modes: **flat** (one normal per triangle) and **Gouraud** (per-vertex normals, intensity interpolated) |
+| FR-2.6 | ASCII luminance-ramp presenter: `Framebuffer` → `CellBuffer` using the ramp `.,-~:;=!*#$@`; pure plain text (the universal fallback; keeps the headless/golden-frame path) |
+| FR-2.7 | Truecolor presenter: `Framebuffer` → ANSI 24-bit string, one block glyph per cell, with SGR run-merging (don't re-emit unchanged color) and a reset at end |
+| FR-2.8 | Half-block presenter: two vertical sub-pixels per cell via `▀` (fg=upper, bg=lower) — 2× vertical resolution at full per-sub-pixel color (research D4 high-fidelity default) |
+| FR-2.9 | CLI: `tte view --render solid\|wireframe`, `--shading flat\|gouraud`, `--mode ascii\|truecolor\|halfblock`; headless output deterministic per mode |
+
+### Non-functional (Phase 2 additions)
+
+| ID | Requirement | Verification |
+|---|---|---|
+| NFR-6 | Truecolor/half-block output ends with an SGR reset (`\x1b[0m`) and emits no color code for a cell whose color equals the previous cell (byte-level run-merging) | presenter unit tests |
+| NFR-3 (ext) | Solid shaded render of a ≤1k-triangle model at 200×50 stays within the ≤5 ms/frame bound | criterion bench |
+
+
 
 Status values: ✅ passing · 🚧 planned (test to be written with the feature).
 
@@ -71,11 +96,21 @@ Status values: ✅ passing · 🚧 planned (test to be written with the feature)
 | FR-1.6 | Unit (byte-level) | `fr1_6_*` in `tte-cli/src/present.rs`: injected `Write` sink; asserts alt-screen enter/leave, cursor hide/show, cursor-home-not-clear, per-row addressing — no PTY | ✅ |
 | FR-1.7 | Unit + PTY (smoke) | `fr1_7_*`: rotation-step determinism + quit-key mapping (unit); `fr1_7_interactive_quits_on_q` (`expectrl`, `#[ignore]`, unix) — `tte-cli/tests/e2e_render.rs` | ✅ |
 | FR-1.8 | E2E + golden frame | `fr1_8_*` — `tte-cli/tests/e2e_render.rs`: headless golden frame, no-ANSI + frame-count check, missing-file & bad-size error paths; option parsing units in `tte-cli/src/lib.rs` | ✅ |
-| NFR-1 | Integration + E2E | `nfr1_*`: double-render equality (lib) + byte-identical repeated CLI runs (e2e) | ✅ |
+| FR-2.1 | Unit | `fr2_1_*` in `tte-core/src/color.rs`: luminance endpoints + weighting, scaled clamp/round | ✅ |
+| FR-2.2 | Unit | `fr2_2_*` in `tte-core/src/framebuffer.rs`: nearer-wins regardless of order, equal-depth no-overwrite, out-of-bounds ignored | ✅ |
+| FR-2.3 | Unit | `fr2_3_*` in `tte-core/src/triangle.rs`: interior fill, back-face cull on/off, degenerate skip, shared-edge no-gap | ✅ |
+| FR-2.4 | Unit | `fr2_4_*` in `tte-core/src/triangle.rs`: occlusion order-independent, depth interpolates across face | ✅ |
+| FR-2.5 | Unit | `fr2_5_*`: Lambert head-on/back-face/bounds (`shading.rs`); solid fills, flat≠gouraud, occlusion (`solid.rs`) | ✅ |
+| FR-2.6 | Unit + golden frame | `fr2_6_*` in `tte-core/src/present.rs` (ramp mapping + shape); `fr2_9_headless_solid_*` golden frames — `tte-cli/tests/e2e_render.rs` | ✅ |
+| FR-2.7 | Unit + E2E | `fr2_7_*`/`nfr6_*` (`present.rs`); `fr2_9_truecolor_*` (e2e) | ✅ |
+| FR-2.8 | Unit + E2E | `fr2_8_*` (`present.rs`: row pairing, odd-height bg); `fr2_9_halfblock_*` (e2e) | ✅ |
+| FR-2.9 | Unit + E2E + golden | `fr2_9_*`: flag parsing + frame builder (`tte-cli/src/lib.rs`, `frame.rs`); solid/gouraud golden frames + truecolor/halfblock structure (e2e) | ✅ |
+| NFR-1 | Integration + E2E | `nfr1_*`: double-render equality (wireframe + solid, lib) + byte-identical repeated CLI runs (e2e) | ✅ |
 | NFR-2 | CI | test job matrix: ubuntu/macos/windows | ✅ |
-| NFR-3 | Bench | `benches/raster.rs` (criterion): cube@80×24 ≈ 2.1 µs, 1k-tri sphere@200×50 ≈ 143 µs — 35× inside the ≤5 ms bound (2026-06, CI-class hardware) | ✅ |
+| NFR-3 | Bench | `benches/raster.rs` (criterion): wireframe 1k-tri@200×50 ≈ 143 µs, solid ≈ 111 µs — ≥35× inside the ≤5 ms bound (2026-06, CI-class hardware) | ✅ |
 | NFR-4 | CI | lint job (`fmt --check`, `clippy -D warnings`) | ✅ |
 | NFR-5 | CI | deny job (`cargo deny check`) | ✅ |
+| NFR-6 | Unit | `nfr6_truecolor_run_merges_identical_colors` + reset assertions — `tte-core/src/present.rs` | ✅ |
 
 ### The functional e2e shape (template for all phases)
 
@@ -94,8 +129,6 @@ fixture scene (tests/data/) ──> real `tte` binary, --headless, fixed size/ca
 
 ## 5. Later phases (outline — to be specified at phase start)
 
-- **Phase 2 (shaded):** FR-2.x — edge-function fill, z-buffer, flat+Gouraud, ASCII ramp +
-  half-block truecolor presenters. E2E: golden frames per shading mode and per presenter.
 - **Phase 3 (interactive orbit):** FR-3.x — raw mode, orbit camera, resize. PTY tests enter scope.
 - **Phase 4 (scene DSL):** FR-4.x — KDL-grammar parser, named materials, mesh refs,
   diagnostics, hot reload. Property round-trips + `cargo-fuzz` on the parser; golden frames per scene fixture.

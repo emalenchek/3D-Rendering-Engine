@@ -15,31 +15,111 @@ fn tte() -> Command {
     Command::cargo_bin("tte").expect("tte binary should build")
 }
 
-#[test]
-fn fr1_8_headless_cube_frame_matches_golden() {
+fn stdout_of(args: &[&str]) -> String {
     let out = tte()
-        .args([
-            "view",
-            "--headless",
-            "--size",
-            "80x24",
-            "--frames",
-            "1",
-            &cube_path(),
-        ])
+        .args(args)
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
-    insta::assert_snapshot!(
-        "headless_cube_80x24_frame0",
-        String::from_utf8(out).unwrap()
+    String::from_utf8(out).expect("stdout is utf-8")
+}
+
+#[test]
+fn fr1_8_headless_wireframe_frame_matches_golden() {
+    // Wireframe is no longer the default (solid is) — request it explicitly.
+    let text = stdout_of(&[
+        "view",
+        "--headless",
+        "--render",
+        "wireframe",
+        "--size",
+        "80x24",
+        "--frames",
+        "1",
+        &cube_path(),
+    ]);
+    insta::assert_snapshot!("headless_cube_80x24_frame0", text);
+}
+
+#[test]
+fn fr2_9_headless_solid_ascii_frame_matches_golden() {
+    let text = stdout_of(&[
+        "view",
+        "--headless",
+        "--render",
+        "solid",
+        "--shading",
+        "flat",
+        "--mode",
+        "ascii",
+        "--size",
+        "80x24",
+        "--frames",
+        "1",
+        &cube_path(),
+    ]);
+    insta::assert_snapshot!("headless_solid_flat_ascii_80x24", text);
+}
+
+#[test]
+fn fr2_9_headless_solid_gouraud_frame_matches_golden() {
+    let text = stdout_of(&[
+        "view",
+        "--headless",
+        "--shading",
+        "gouraud",
+        "--size",
+        "80x24",
+        "--frames",
+        "1",
+        &cube_path(),
+    ]);
+    insta::assert_snapshot!("headless_solid_gouraud_ascii_80x24", text);
+}
+
+#[test]
+fn fr2_9_truecolor_output_has_ansi_fg_and_final_reset() {
+    let text = stdout_of(&[
+        "view",
+        "--headless",
+        "--mode",
+        "truecolor",
+        "--size",
+        "40x12",
+        &cube_path(),
+    ]);
+    assert!(text.contains("\x1b[38;2;"), "expected 24-bit fg codes");
+    assert!(text.contains('█'), "expected block glyphs");
+    assert!(text.ends_with("\x1b[0m"), "must end with SGR reset");
+}
+
+#[test]
+fn fr2_9_halfblock_output_uses_upper_half_block_and_bg() {
+    let text = stdout_of(&[
+        "view",
+        "--headless",
+        "--mode",
+        "halfblock",
+        "--size",
+        "40x12",
+        &cube_path(),
+    ]);
+    assert!(text.contains('▀'), "expected upper-half-block glyphs");
+    assert!(
+        text.contains("\x1b[48;2;"),
+        "expected 24-bit background codes"
+    );
+    // 12 cell rows even though rendered at 24 pixel rows.
+    assert_eq!(
+        text.trim_end_matches("\x1b[0m").trim_end().lines().count(),
+        12
     );
 }
 
 #[test]
-fn fr1_8_headless_output_contains_no_ansi_escapes() {
+fn fr1_8_headless_default_output_contains_no_ansi_escapes() {
     let out = tte()
         .args([
             "view",
