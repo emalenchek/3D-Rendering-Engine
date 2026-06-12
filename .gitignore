@@ -1,0 +1,24 @@
+# Rust / Cargo build artifacts
+/target/
+**/target/
+
+# Backtrace / debug
+*.pdb
+
+# Coverage output
+/coverage/
+*.profraw
+lcov.info
+
+# Criterion benchmark output
+/target/criterion/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# insta pending snapshots (review then accept; never commit *.snap.new)
+*.snap.new
+*.pending-snap

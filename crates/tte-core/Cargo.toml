@@ -1,0 +1,22 @@
+[package]
+name = "tte-core"
+description = "Portable core of the text-encoded 3D rendering engine: math, scene model, software rasterizer, and cell-buffer output."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+# Test stack — see docs/02-test-harness.md for the rationale behind each.
+# (Benchmark deps + [[bench]] target are added in the test-harness step,
+# pending the criterion-vs-divan decision from the testing research.)
+approx = "0.5"          # float-tolerant assertions for rasterizer/math tests
+insta = "1"             # golden-frame snapshot testing of rendered cell buffers
+proptest = "1"          # property-based tests for math invariants & parser round-trips

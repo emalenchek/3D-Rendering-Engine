@@ -1,0 +1,25 @@
+[package]
+name = "tte-cli"
+description = "Native terminal frontend for the text-encoded 3D rendering engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "tte"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+tte-core.workspace = true
+
+[dev-dependencies]
+# End-to-end CLI testing — see docs/02-test-harness.md.
+assert_cmd = "2"        # build & run the `tte` binary, assert on stdout/exit code
+predicates = "3"        # composable assertions for assert_cmd output
+insta = "1"             # golden snapshots of CLI output (frames, --help)
