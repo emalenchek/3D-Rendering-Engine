@@ -575,6 +575,7 @@ name = "tte-cli"
 version = "0.0.0"
 dependencies = [
  "assert_cmd",
+ "insta",
  "predicates",
  "tte-core",
 ]

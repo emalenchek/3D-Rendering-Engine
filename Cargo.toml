@@ -6,13 +6,13 @@
 #   - tte-cli  : native terminal frontend (binary)
 # A `tte-wasm` crate will be added in a later phase.
 [workspace]
-resolver = "2"
+resolver = "3"
 members = ["crates/tte-core", "crates/tte-cli"]
 
 # Fields shared by all workspace crates (referenced via `field.workspace = true`).
 [workspace.package]
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/emalenchek/3d-rendering-engine"

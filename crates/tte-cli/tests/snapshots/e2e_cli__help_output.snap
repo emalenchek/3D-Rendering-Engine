@@ -1,0 +1,12 @@
+---
+source: crates/tte-cli/tests/e2e_cli.rs
+expression: "String::from_utf8(out).unwrap()"
+---
+tte — text-encoded 3D rendering engine (Phase 1 scaffolding)
+
+USAGE:
+    tte [OPTIONS]
+
+OPTIONS:
+    -V, --version    Print version information
+    -h, --help       Print this help

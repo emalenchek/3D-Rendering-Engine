@@ -22,3 +22,4 @@ tte-core.workspace = true
 # End-to-end CLI testing — see docs/02-test-harness.md.
 assert_cmd = "2"        # build & run the `tte` binary, assert on stdout/exit code
 predicates = "3"        # composable assertions for assert_cmd output
+insta = "1"             # golden snapshots of CLI output (frames, --help)
