@@ -2,10 +2,19 @@
 source: crates/tte-cli/tests/e2e_cli.rs
 expression: "String::from_utf8(out).unwrap()"
 ---
-tte — text-encoded 3D rendering engine (Phase 1 scaffolding)
+tte — text-encoded 3D rendering engine
 
 USAGE:
+    tte view [OPTIONS] <scene.obj>    View a model as a spinning wireframe
     tte [OPTIONS]
+
+VIEW OPTIONS:
+    --headless       Dump frames as plain text to stdout (no terminal control)
+    --size WxH       Cell grid size (default: terminal size, or 80x24 headless)
+    --frames N       Number of frames to dump in headless mode (default: 1)
+
+KEYS (interactive):
+    q, Esc, Ctrl-C   Quit
 
 OPTIONS:
     -V, --version    Print version information

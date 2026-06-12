@@ -1,29 +1,39 @@
 //! `tte-core` — portable core of the text-encoded 3D rendering engine.
 //!
-//! This crate is **environment-staging scaffolding** for Phase 1. The real
-//! modules (math, scene model, software rasterizer, cell-buffer output) land as
-//! Phase 1 progresses; see `docs/00-project-brief.md` and
-//! `docs/01-requirements-spec.md`.
+//! Phase 1 scope (see `docs/01-requirements-spec.md`): wireframe rendering of
+//! OBJ meshes into a [`CellBuffer`] — a pure character-grid value that
+//! frontends (terminal, later WASM) present however they like.
 //!
-//! It currently exposes only a version helper so the workspace builds and the
-//! test harness (unit + doctest + integration + snapshot) has something real to
-//! exercise end to end.
+//! ```
+//! use tte_core::{parse_obj, render_wireframe, Camera, Mat4};
+//!
+//! let mesh = parse_obj("v -1 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n").unwrap();
+//! let frame = render_wireframe(&mesh, Mat4::IDENTITY, &Camera::default(), 40, 12);
+//! assert_eq!(frame.to_string().lines().count(), 12);
+//! ```
+
+pub mod camera;
+pub mod cell;
+pub mod math;
+pub mod mesh;
+pub mod obj;
+pub mod raster;
+pub mod render;
+
+pub use camera::Camera;
+pub use cell::CellBuffer;
+pub use math::{Mat4, Vec3, Vec4};
+pub use mesh::Mesh;
+pub use obj::{ObjError, load_obj, parse_obj};
+pub use render::render_wireframe;
 
 /// Returns the crate's semantic version string (from `Cargo.toml`).
-///
-/// # Examples
-///
-/// ```
-/// // Doctest: compiled and run by `cargo test`.
-/// assert!(!tte_core::version().is_empty());
-/// ```
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
 #[cfg(test)]
 mod tests {
-    //! Unit tests: live in-module, can reach private items, run with `cargo test`.
     use super::*;
 
     #[test]
