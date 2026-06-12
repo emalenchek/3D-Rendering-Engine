@@ -5,9 +5,10 @@ A high-performance 3D rendering engine, text-encoded in both directions:
 - **Text in** — scenes described in a small, human-writable declarative DSL
 - **Text out** — a from-scratch software rasterizer presenting frames as ASCII/Unicode + ANSI color in the terminal (browser/WASM frontend planned)
 
-**MVP complete (Phases 1–4)** — text in, text out: render OBJ models *and* scenes described
-in a small text DSL as solid, depth-tested, diffuse-shaded frames in the terminal (ASCII,
-truecolor, or half-block), navigable with a live orbit camera.
+**v1.0.0 — MVP complete (Phases 1–4)** — text in, text out: render OBJ models *and* scenes
+described in a small text DSL as solid, depth-tested, diffuse-shaded frames in the terminal
+(ASCII, truecolor, or half-block), navigable with a live orbit camera. See
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
