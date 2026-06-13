@@ -22,3 +22,6 @@ lcov.info
 # insta pending snapshots (review then accept; never commit *.snap.new)
 *.snap.new
 *.pending-snap
+
+# Generated WASM bindings (built by web/build.sh; not committed)
+/web/pkg/

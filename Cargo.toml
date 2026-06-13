@@ -4,10 +4,10 @@
 # Layout follows the two-layer architecture from the project brief:
 #   - tte-core : portable engine library (math, scene model, rasterizer, cell buffer)
 #   - tte-cli  : native terminal frontend (binary)
-# A `tte-wasm` crate will be added in a later phase.
+#   - tte-wasm : browser frontend (wasm-bindgen cdylib over tte-core) — v2.0 Phase 5
 [workspace]
 resolver = "3"
-members = ["crates/tte-core", "crates/tte-cli"]
+members = ["crates/tte-core", "crates/tte-cli", "crates/tte-wasm"]
 
 # Fields shared by all workspace crates (referenced via `field.workspace = true`).
 [workspace.package]
@@ -37,3 +37,14 @@ all = { level = "warn", priority = -1 }
 # debugging our own code. Tune as needed once we have benchmarks.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Size-optimized profile for the wasm artifact only (research report 08, NFR-7).
+# Kept separate from `release` so native + criterion benches stay speed-tuned.
+# Build with: cargo build -p tte-wasm --profile release-wasm --target wasm32-unknown-unknown
+[profile.release-wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

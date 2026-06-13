@@ -1,0 +1,25 @@
+[package]
+name = "tte-wasm"
+description = "Browser/WASM frontend for the text-encoded 3D rendering engine: a wasm-bindgen Renderer over tte-core."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+# cdylib → the wasm artifact; rlib → native `cargo test` can link the logic.
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+tte-core.workspace = true
+# Keep web-sys OUT (decision V4a): the module exposes only data; JS owns the
+# canvas. wasm-bindgen alone marshals the typed-array frame buffers.
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

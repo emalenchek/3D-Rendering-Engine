@@ -47,6 +47,25 @@ jobs:
       - name: Doctests (nextest does not run these)
         run: cargo test --workspace --doc
 
+  wasm:
+    name: WASM frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen
+      - name: Build wasm artifact (size-optimized)
+        run: cargo build -p tte-wasm --profile release-wasm --target wasm32-unknown-unknown
+      - name: Smoke test in Node (wasm-bindgen-test)
+        run: cargo test -p tte-wasm --target wasm32-unknown-unknown
+      - name: Generate bindings + check size budget (NFR-7)
+        run: ./web/build.sh
+
   deny:
     name: Dependency vetting
     runs-on: ubuntu-latest

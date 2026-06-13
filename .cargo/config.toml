@@ -1,0 +1,5 @@
+# Run wasm-bindgen-test for the wasm target in Node (FR-5.5), so
+# `cargo test -p tte-wasm --target wasm32-unknown-unknown` works without a browser.
+# (The wasm crate uses no web-sys, so Node is sufficient.)
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"
