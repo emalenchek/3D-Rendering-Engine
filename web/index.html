@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>tte — text-encoded 3D in the browser</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, sans-serif;
+        background: #0b0d12;
+        color: #d8dee9;
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        min-height: 100vh;
+      }
+      @media (max-width: 760px) { body { grid-template-columns: 1fr; } }
+      main { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
+      h1 { font-size: 16px; font-weight: 600; margin: 4px 0; letter-spacing: 0.02em; }
+      h1 small { color: #8089a0; font-weight: 400; }
+      #screen {
+        background: #000;
+        border: 1px solid #222630;
+        border-radius: 6px;
+        image-rendering: pixelated;
+        touch-action: none;
+        max-width: 100%;
+      }
+      aside { padding: 16px; border-left: 1px solid #1a1e27; display: flex; flex-direction: column; gap: 12px; }
+      label { display: block; font-size: 12px; color: #8089a0; margin-bottom: 4px; }
+      select, textarea {
+        width: 100%; background: #11141b; color: #d8dee9;
+        border: 1px solid #262b36; border-radius: 5px; padding: 8px; font-size: 13px;
+      }
+      textarea { font-family: ui-monospace, monospace; min-height: 240px; resize: vertical; }
+      .row { display: flex; gap: 10px; }
+      .row > div { flex: 1; }
+      #status { color: #6dd58c; font-family: ui-monospace, monospace; font-size: 12px; }
+      #error { color: #e06c75; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; min-height: 1em; }
+      .hint { color: #8089a0; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>tte <small>· drag to orbit · scroll / pinch to zoom</small></h1>
+      <canvas id="screen"></canvas>
+      <div id="status">loading…</div>
+    </main>
+    <aside>
+      <div class="row">
+        <div>
+          <label for="preset">Preset</label>
+          <select id="preset"></select>
+        </div>
+        <div>
+          <label for="mode">Output</label>
+          <select id="mode">
+            <option value="ascii">ASCII</option>
+            <option value="truecolor">Truecolor</option>
+            <option value="halfblock">Half-block</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label for="editor">Scene (live)</label>
+        <textarea id="editor" spellcheck="false"></textarea>
+      </div>
+      <div id="error"></div>
+      <p class="hint">
+        Edits re-render live. The renderer is Rust compiled to WebAssembly; the
+        same engine runs in your terminal via <code>tte</code>.
+      </p>
+    </aside>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

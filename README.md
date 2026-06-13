@@ -22,7 +22,18 @@ cargo test                                                           # full test
 ```
 
 Interactive keys: **arrows / hjkl** orbit · **+ / −** zoom · **space** toggle auto-orbit ·
-**r** reset · **q** quit. Editing a `.scene` file while it's open hot-reloads it live.
+**r** reset · **q** quit.
+
+**Also runs in the browser** (v2.0 Phase 5): the same engine compiled to WebAssembly draws
+the cell grid to a canvas, with mouse + touch orbit and a live scene editor.
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.123
+./web/build.sh && python3 -m http.server -d web   # open http://localhost:8000
+```
+
+See [web/README.md](web/README.md). Editing a `.scene` file while it's open hot-reloads it live.
 
 ## Scene DSL ("text in")
 
