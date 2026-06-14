@@ -1,7 +1,25 @@
-//! Edge-function triangle rasterization with a z-buffer (FR-2.3, FR-2.4).
+//! Edge-function triangle rasterization with a z-buffer (FR-2.3, FR-2.4, FR-6.0).
+//!
+//! Coverage uses **integer edge functions** on sub-pixel-snapped coordinates
+//! (Giesen-style fixed point) with a top-left fill rule. Two payoffs, per
+//! research report 09:
+//! - **Exact / deterministic**: integer `orient2d` has no rounding, so a SIMD or
+//!   multi-threaded path can reproduce the scalar coverage bit-for-bit (FR-6.3).
+//! - **Watertight**: the top-left rule gives every interior pixel exactly one
+//!   covering triangle — no seams, no double-draw (replaces the old inclusive
+//!   `barycentric ≥ 0` workaround).
+//!
+//! Attribute interpolation (depth, intensity) stays floating point but in a
+//! fixed operation order (no FMA contraction) so it is reproducible too.
 
 use crate::color::Rgb;
 use crate::framebuffer::Framebuffer;
+
+/// Sub-pixel precision: coordinates are snapped to a 1/16-pixel grid before the
+/// integer edge functions are evaluated. 4 bits is plenty at terminal/browser
+/// cell resolutions and keeps the `i64` edge products comfortably in range.
+const SUBPIXEL_BITS: u32 = 4;
+const SUBPIXEL: i64 = 1 << SUBPIXEL_BITS;
 
 /// A triangle vertex in screen space, carrying the attributes interpolated
 /// across the face: sub-pixel position, NDC depth, and shading intensity.
@@ -13,22 +31,41 @@ pub struct Vertex {
     pub intensity: f32,
 }
 
-/// Twice the signed area of triangle `(a, b, c)` in screen space (the standard
-/// orientation predicate). Sign encodes winding; magnitude is 2·area.
-fn orient2d(ax: f32, ay: f32, bx: f32, by: f32, cx: f32, cy: f32) -> f32 {
-    (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+/// A vertex snapped to the sub-pixel integer grid (position only).
+#[derive(Clone, Copy)]
+struct Snapped {
+    x: i64,
+    y: i64,
+}
+
+fn snap(v: &Vertex) -> Snapped {
+    Snapped {
+        x: (f64::from(v.x) * SUBPIXEL as f64).round() as i64,
+        y: (f64::from(v.y) * SUBPIXEL as f64).round() as i64,
+    }
+}
+
+/// Twice the signed area of `(a, b, c)` in sub-pixel integer space — exact, so
+/// coverage is deterministic. Sign encodes winding.
+fn orient2d(a: Snapped, b: Snapped, c: Snapped) -> i64 {
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+}
+
+/// Top-left rule: a pixel lying exactly on an edge belongs to the triangle only
+/// if that edge is a left edge (points upward, dy < 0) or a top edge (horizontal
+/// and pointing left). Opposite windings on a shared edge make exactly one of
+/// the two triangles include it.
+fn is_top_left(s: Snapped, e: Snapped) -> bool {
+    let (dx, dy) = (e.x - s.x, e.y - s.y);
+    dy < 0 || (dy == 0 && dx < 0)
 }
 
 /// Rasterize `(v0, v1, v2)`, modulating `base_color` by the per-pixel
-/// interpolated intensity and depth-testing each fragment (FR-2.4).
+/// interpolated intensity and depth-testing each fragment.
 ///
-/// `cull_back`: when set, triangles whose screen-space winding faces away from
-/// the camera are skipped. In our y-down screen space a front face (CCW in the
-/// y-up NDC the projection produces) has **negative** signed area.
-///
-/// Coverage is inclusive (`barycentric ≥ 0`), so shared edges never leave gaps;
-/// exact single-coverage (top-left rule) is a deferred refinement, harmless
-/// here because the z-buffer makes seam double-writes idempotent.
+/// `cull_back`: skip triangles whose screen-space winding faces away from the
+/// camera. In our y-down screen space a front face (CCW in the y-up NDC the
+/// projection produces) has **negative** signed area.
 pub fn fill_triangle(
     fb: &mut Framebuffer,
     v0: Vertex,
@@ -37,58 +74,97 @@ pub fn fill_triangle(
     base_color: Rgb,
     cull_back: bool,
 ) -> bool {
-    let area = orient2d(v0.x, v0.y, v1.x, v1.y, v2.x, v2.y);
-    if area.abs() < 1e-6 {
+    let p0 = snap(&v0);
+    let mut p1 = snap(&v1);
+    let mut p2 = snap(&v2);
+    let a0 = v0;
+    let mut a1 = v1;
+    let mut a2 = v2;
+
+    let area = orient2d(p0, p1, p2);
+    if area == 0 {
         return false; // degenerate / zero-area
     }
-    let front_facing = area < 0.0;
+    let front_facing = area < 0;
     if cull_back && !front_facing {
         return false;
     }
-
-    // Normalize to a positive-area winding so barycentric weights are ≥ 0
-    // inside; swapping two vertices carries their attributes along.
-    let (v1, v2, area) = if area < 0.0 {
-        (v2, v1, -area)
+    // Normalize to positive-area winding so the edge functions are ≥ 0 inside;
+    // swapping two vertices carries their attributes along.
+    let area = if area < 0 {
+        std::mem::swap(&mut p1, &mut p2);
+        std::mem::swap(&mut a1, &mut a2);
+        -area
     } else {
-        (v1, v2, area)
+        area
     };
+    let area_f = area as f32;
 
-    let (min_x, max_x, min_y, max_y) = bounds(fb, &[v0, v1, v2]);
-    let inv_area = 1.0 / area;
+    let (min_x, max_x, min_y, max_y) = bounds(fb, [p0, p1, p2]);
+    if min_x > max_x || min_y > max_y {
+        return false;
+    }
+
+    // Top-left bias per edge: edge0 = p1→p2, edge1 = p2→p0, edge2 = p0→p1.
+    let tl0 = is_top_left(p1, p2);
+    let tl1 = is_top_left(p2, p0);
+    let tl2 = is_top_left(p0, p1);
+
+    // Per-pixel increments of each edge function (16 sub-pixels per pixel).
+    let step_x = |s: Snapped, e: Snapped| -(e.y - s.y) * SUBPIXEL;
+    let step_y = |s: Snapped, e: Snapped| (e.x - s.x) * SUBPIXEL;
+    let (sx0, sy0) = (step_x(p1, p2), step_y(p1, p2));
+    let (sx1, sy1) = (step_x(p2, p0), step_y(p2, p0));
+    let (sx2, sy2) = (step_x(p0, p1), step_y(p0, p1));
+
+    // Edge values at the center of the top-left pixel of the bounding box.
+    let half = SUBPIXEL / 2;
+    let origin = Snapped {
+        x: i64::from(min_x) * SUBPIXEL + half,
+        y: i64::from(min_y) * SUBPIXEL + half,
+    };
+    let mut w0_row = orient2d(p1, p2, origin);
+    let mut w1_row = orient2d(p2, p0, origin);
+    let mut w2_row = orient2d(p0, p1, origin);
+
     let mut drew = false;
-
     for y in min_y..=max_y {
+        let (mut w0, mut w1, mut w2) = (w0_row, w1_row, w2_row);
         for x in min_x..=max_x {
-            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            // Barycentric weight of each vertex = normalized opposite-edge area.
-            let b0 = orient2d(v1.x, v1.y, v2.x, v2.y, px, py) * inv_area;
-            let b1 = orient2d(v2.x, v2.y, v0.x, v0.y, px, py) * inv_area;
-            let b2 = orient2d(v0.x, v0.y, v1.x, v1.y, px, py) * inv_area;
-            if b0 < 0.0 || b1 < 0.0 || b2 < 0.0 {
-                continue;
+            // Inside if every edge is positive, or zero on a top-left edge.
+            let inside = (w0 > 0 || (w0 == 0 && tl0))
+                && (w1 > 0 || (w1 == 0 && tl1))
+                && (w2 > 0 || (w2 == 0 && tl2));
+            if inside {
+                let b0 = w0 as f32 / area_f;
+                let b1 = w1 as f32 / area_f;
+                let b2 = w2 as f32 / area_f;
+                let depth = b0 * a0.depth + b1 * a1.depth + b2 * a2.depth;
+                let intensity = b0 * a0.intensity + b1 * a1.intensity + b2 * a2.intensity;
+                drew |= fb.plot(x, y, depth, base_color.scaled(intensity));
             }
-            let depth = b0 * v0.depth + b1 * v1.depth + b2 * v2.depth;
-            let intensity = b0 * v0.intensity + b1 * v1.intensity + b2 * v2.intensity;
-            drew |= fb.plot(x, y, depth, base_color.scaled(intensity));
+            w0 += sx0;
+            w1 += sx1;
+            w2 += sx2;
         }
+        w0_row += sy0;
+        w1_row += sy1;
+        w2_row += sy2;
     }
     drew
 }
 
-/// Integer bounding box of the triangle, clamped to the framebuffer.
-fn bounds(fb: &Framebuffer, vs: &[Vertex; 3]) -> (i32, i32, i32, i32) {
-    let xs = vs.iter().map(|v| v.x);
-    let ys = vs.iter().map(|v| v.y);
-    let min_x = xs.clone().fold(f32::INFINITY, f32::min).floor() as i32;
-    let max_x = xs.fold(f32::NEG_INFINITY, f32::max).ceil() as i32;
-    let min_y = ys.clone().fold(f32::INFINITY, f32::min).floor() as i32;
-    let max_y = ys.fold(f32::NEG_INFINITY, f32::max).ceil() as i32;
+/// Integer pixel bounding box of the triangle, clamped to the framebuffer.
+fn bounds(fb: &Framebuffer, vs: [Snapped; 3]) -> (i32, i32, i32, i32) {
+    let min = |sel: fn(Snapped) -> i64| vs.iter().map(|&v| sel(v)).min().unwrap();
+    let max = |sel: fn(Snapped) -> i64| vs.iter().map(|&v| sel(v)).max().unwrap();
+    // Floor/ceil to whole pixels via Euclidean division on the sub-pixel grid.
+    let px = |sub: i64| sub.div_euclid(SUBPIXEL) as i32;
     (
-        min_x.max(0),
-        max_x.min(i32::from(fb.width()) - 1),
-        min_y.max(0),
-        max_y.min(i32::from(fb.height()) - 1),
+        px(min(|v| v.x)).max(0),
+        px(max(|v| v.x)).min(i32::from(fb.width()) - 1),
+        px(min(|v| v.y)).max(0),
+        px(max(|v| v.y)).min(i32::from(fb.height()) - 1),
     )
 }
 
@@ -127,14 +203,12 @@ mod tests {
         let [a, b, c] = front_tri(0.0, 1.0);
         assert!(fill_triangle(&mut fb, a, b, c, Rgb::WHITE, true));
         assert!(count_filled(&fb) > 10, "expected a filled area");
-        // A point clearly inside should be the base color at full intensity.
         assert_eq!(fb.color_at(4, 6), Some(Rgb::WHITE));
     }
 
     #[test]
     fn fr2_3_back_facing_triangle_is_culled() {
         let mut fb = Framebuffer::new(10, 10);
-        // Reverse winding of front_tri → back-facing.
         let [a, b, c] = front_tri(0.0, 1.0);
         assert!(!fill_triangle(&mut fb, a, c, b, Rgb::WHITE, true));
         assert_eq!(count_filled(&fb), 0);
@@ -165,7 +239,6 @@ mod tests {
 
     #[test]
     fn fr2_3_two_triangles_sharing_an_edge_leave_no_gap() {
-        // Quad split into two tris: every pixel of the rectangle is covered.
         let mut fb = Framebuffer::new(12, 12);
         let tl = vert(2.0, 2.0, 0.0, 1.0);
         let tr = vert(9.0, 2.0, 0.0, 1.0);
@@ -173,16 +246,46 @@ mod tests {
         let br = vert(9.0, 9.0, 0.0, 1.0);
         fill_triangle(&mut fb, tl, bl, tr, Rgb::WHITE, false);
         fill_triangle(&mut fb, tr, bl, br, Rgb::WHITE, false);
-        // Interior sample on the shared diagonal region is covered.
         for (x, y) in [(3, 3), (8, 8), (5, 5), (3, 8), (8, 3)] {
             assert_eq!(fb.color_at(x, y), Some(Rgb::WHITE), "gap at ({x},{y})");
         }
     }
 
+    /// FR-6.0: the top-left rule covers a shared edge exactly once. Two tris
+    /// meeting at a vertical seam must not double-write any column.
+    #[test]
+    fn fr6_0_shared_edge_is_covered_exactly_once() {
+        // Count how many times each pixel is written using a counting buffer:
+        // render each triangle into its own fb, then check no pixel is set in both.
+        let tri = |verts: [Vertex; 3]| {
+            let mut fb = Framebuffer::new(16, 16);
+            fill_triangle(&mut fb, verts[0], verts[1], verts[2], Rgb::WHITE, false);
+            fb
+        };
+        // Quad (2,2)-(12,12) split along the diagonal (2,2)->(12,12).
+        let a = vert(2.0, 2.0, 0.0, 1.0);
+        let b = vert(12.0, 2.0, 0.0, 1.0);
+        let c = vert(2.0, 12.0, 0.0, 1.0);
+        let d = vert(12.0, 12.0, 0.0, 1.0);
+        let left = tri([a, c, d]);
+        let right = tri([a, d, b]);
+        let mut overlaps = 0;
+        for y in 0..16 {
+            for x in 0..16 {
+                let lit = |fb: &Framebuffer| fb.color_at(x, y) == Some(Rgb::WHITE);
+                if lit(&left) && lit(&right) {
+                    overlaps += 1;
+                }
+            }
+        }
+        assert_eq!(
+            overlaps, 0,
+            "shared edge double-covered on {overlaps} pixels"
+        );
+    }
+
     #[test]
     fn fr2_4_nearer_triangle_occludes_farther_regardless_of_order() {
-        // Full intensity on both so each pixel's color is exactly the winning
-        // triangle's base color, isolating the depth test from shading.
         let draw = |first_depth: f32, second_depth: f32| {
             let mut fb = Framebuffer::new(10, 10);
             let [a, b, c] = front_tri(first_depth, 1.0);
@@ -191,7 +294,6 @@ mod tests {
             fill_triangle(&mut fb, a, b, c, Rgb::new(100, 100, 100), false);
             fb.color_at(4, 6).unwrap()
         };
-        // Whichever triangle is nearer (smaller depth) wins both ways.
         assert_eq!(draw(0.8, 0.2), Rgb::new(100, 100, 100), "second nearer");
         assert_eq!(draw(0.2, 0.8), Rgb::WHITE, "first nearer");
     }
@@ -199,7 +301,6 @@ mod tests {
     #[test]
     fn fr2_4_depth_interpolates_across_the_face() {
         let mut fb = Framebuffer::new(20, 20);
-        // Depth ramps 0 → 1 along the triangle; interior depths land between.
         let a = vert(2.0, 18.0, 0.0, 1.0);
         let b = vert(18.0, 18.0, 1.0, 1.0);
         let c = vert(10.0, 2.0, 0.5, 1.0);
@@ -209,5 +310,17 @@ mod tests {
             d > 0.0 && d < 1.0,
             "interpolated depth {d} not strictly interior"
         );
+    }
+
+    /// FR-6.3 precondition: integer coverage is fully deterministic.
+    #[test]
+    fn fr6_0_rasterization_is_deterministic() {
+        let render = || {
+            let mut fb = Framebuffer::new(40, 40);
+            let [a, b, c] = front_tri(0.3, 0.8);
+            fill_triangle(&mut fb, a, b, c, Rgb::new(200, 150, 100), false);
+            fb.rows().flatten().copied().collect::<Vec<_>>()
+        };
+        assert_eq!(render(), render());
     }
 }
