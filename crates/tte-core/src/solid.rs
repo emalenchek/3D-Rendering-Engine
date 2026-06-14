@@ -5,7 +5,7 @@
 //! Produces a [`Framebuffer`]; a presenter (FR-2.6–2.8) turns that into output.
 
 use crate::camera::Camera;
-use crate::color::Material;
+use crate::color::{Material, Rgb};
 use crate::framebuffer::Framebuffer;
 use crate::math::{Mat4, Vec3, Vec4};
 use crate::mesh::Mesh;
@@ -13,6 +13,25 @@ use crate::primitives;
 use crate::scene::{Geometry, Scene};
 use crate::shading::{DirectionalLight, ShadingMode};
 use crate::triangle::{self, Vertex};
+
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
+
+/// A screen-space triangle ready to rasterize: three shaded vertices, a base
+/// color, and its pixel-row span (precomputed so a parallel band can skip
+/// triangles it doesn't overlap — FR-6.1).
+#[derive(Debug, Clone, Copy)]
+struct DrawTri {
+    v: [Vertex; 3],
+    color: Rgb,
+    y_min: i32,
+    y_max: i32,
+}
+
+/// Below this triangle count the parallel path's overhead isn't worth it
+/// (research report 09, small-working-set caveat) — render sequentially.
+#[cfg(feature = "parallel")]
+const PARALLEL_MIN_TRIS: usize = 256;
 
 /// Lighting + surface options for a solid render (bundled to keep the render
 /// signature small and `Copy`). Each field's own `Default` supplies the default
@@ -48,7 +67,10 @@ pub fn render_solid(
 }
 
 /// Rasterize one mesh into an existing framebuffer (FR-4.5 building block). Lets
-/// a whole scene accumulate into one shared z-buffer.
+/// a whole scene accumulate into one shared z-buffer. The geometry stage builds
+/// a screen-space triangle list (preserving mesh order), then the rasterizer
+/// draws it sequentially or, with the `parallel` feature, across row bands —
+/// byte-identically either way (FR-6.1, FR-6.3).
 pub fn render_mesh_into(
     fb: &mut Framebuffer,
     mesh: &Mesh,
@@ -58,35 +80,54 @@ pub fn render_mesh_into(
     shading: ShadingMode,
     material: Material,
 ) {
-    let (width, height) = (fb.width(), fb.height());
+    let tris = prepare_mesh(
+        mesh,
+        model,
+        camera,
+        light,
+        shading,
+        material,
+        fb.width(),
+        fb.height(),
+    );
+    rasterize(fb, &tris);
+}
+
+/// Geometry stage: transform, shade, near-plane-cull, and project a mesh into a
+/// screen-space triangle list (mesh order preserved). Separated from rasterization
+/// so both rasterizer paths can be driven from the same input (FR-6.3 tests).
+#[allow(clippy::too_many_arguments)]
+fn prepare_mesh(
+    mesh: &Mesh,
+    model: Mat4,
+    camera: &Camera,
+    light: &DirectionalLight,
+    shading: ShadingMode,
+    material: Material,
+    width: u16,
+    height: u16,
+) -> Vec<DrawTri> {
     let view_proj = camera.projection_matrix(width, height) * camera.view_matrix();
 
     // World-space positions and normals. The model's linear part transforms
     // normals correctly for rotation/uniform scale; non-uniform scale would
     // need the inverse-transpose — deferred with the material system.
-    let world_pos: Vec<Vec3> = mesh
-        .positions
-        .iter()
-        .map(|&p| transform_point(model, p))
-        .collect();
-    let world_nrm: Vec<Vec3> = mesh
-        .normals
-        .iter()
-        .map(|&n| transform_dir(model, n))
-        .collect();
-    let clip: Vec<Vec4> = world_pos
-        .iter()
-        .map(|&p| view_proj * p.extend(1.0))
-        .collect();
+    let world_pos = map_collect(&mesh.positions, |&p| transform_point(model, p));
+    let world_nrm = map_collect(&mesh.normals, |&n| transform_dir(model, n));
+    let clip = map_collect(&world_pos, |&p| view_proj * p.extend(1.0));
 
-    for &[ia, ib, ic] in &mesh.triangles {
+    // Project + shade + near-cull each triangle. `filter_map_collect` keeps mesh
+    // order (so the rasterizer's z tie-break stays deterministic) while running
+    // in parallel when the `parallel` feature is on (parallelizing the geometry
+    // stage matters: at high triangle counts it dominates the frame — Amdahl).
+    filter_map_collect(&mesh.triangles, |&[ia, ib, ic]| {
         let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
         let (ca, cb, cc) = (clip[ia], clip[ib], clip[ic]);
 
         // Near-plane cull (FR-1.3 approach): drop any triangle with a vertex at
         // or behind the near plane rather than splitting it (Phase 5 hardening).
         if behind_near(ca) || behind_near(cb) || behind_near(cc) {
-            continue;
+            return None;
         }
 
         let intensity = |vertex_normal: Vec3, face_normal: Vec3| match shading {
@@ -95,12 +136,95 @@ pub fn render_mesh_into(
         };
         let face_normal = face_normal(world_pos[ia], world_pos[ib], world_pos[ic]);
 
-        let v0 = screen_vertex(ca, intensity(world_nrm[ia], face_normal), width, height);
-        let v1 = screen_vertex(cb, intensity(world_nrm[ib], face_normal), width, height);
-        let v2 = screen_vertex(cc, intensity(world_nrm[ic], face_normal), width, height);
+        let v = [
+            screen_vertex(ca, intensity(world_nrm[ia], face_normal), width, height),
+            screen_vertex(cb, intensity(world_nrm[ib], face_normal), width, height),
+            screen_vertex(cc, intensity(world_nrm[ic], face_normal), width, height),
+        ];
+        let y_min = v.iter().map(|p| p.y.floor() as i32).min().unwrap();
+        let y_max = v.iter().map(|p| p.y.ceil() as i32).max().unwrap();
+        Some(DrawTri {
+            v,
+            color: material.base_color,
+            y_min,
+            y_max,
+        })
+    })
+}
 
-        triangle::fill_triangle(fb, v0, v1, v2, material.base_color, true);
+/// Order-preserving `map` → `Vec`, parallel under the `parallel` feature.
+#[cfg(feature = "parallel")]
+fn map_collect<T: Sync, U: Send>(items: &[T], f: impl Fn(&T) -> U + Sync + Send) -> Vec<U> {
+    items.par_iter().map(f).collect()
+}
+#[cfg(not(feature = "parallel"))]
+fn map_collect<T, U>(items: &[T], f: impl Fn(&T) -> U) -> Vec<U> {
+    items.iter().map(f).collect()
+}
+
+/// Order-preserving `filter_map` → `Vec`, parallel under the `parallel` feature.
+#[cfg(feature = "parallel")]
+fn filter_map_collect<T: Sync, U: Send>(
+    items: &[T],
+    f: impl Fn(&T) -> Option<U> + Sync + Send,
+) -> Vec<U> {
+    items.par_iter().filter_map(f).collect()
+}
+#[cfg(not(feature = "parallel"))]
+fn filter_map_collect<T, U>(items: &[T], f: impl Fn(&T) -> Option<U>) -> Vec<U> {
+    items.iter().filter_map(f).collect()
+}
+
+/// Draw a prepared triangle list into `fb`. Dispatches to the parallel band
+/// rasterizer when the `parallel` feature is on and there's enough work.
+fn rasterize(fb: &mut Framebuffer, tris: &[DrawTri]) {
+    #[cfg(feature = "parallel")]
+    if tris.len() >= PARALLEL_MIN_TRIS {
+        rasterize_parallel(fb, tris);
+        return;
     }
+    rasterize_seq(fb, tris);
+}
+
+/// Sequential rasterization: triangles in list order into the whole frame.
+fn rasterize_seq(fb: &mut Framebuffer, tris: &[DrawTri]) {
+    for t in tris {
+        triangle::fill_triangle(fb, t.v[0], t.v[1], t.v[2], t.color, true);
+    }
+}
+
+/// Parallel rasterization (FR-6.1): partition the frame into disjoint row bands
+/// and draw every triangle into each band it overlaps. Bands own non-overlapping
+/// pixels (no atomics, no races), and each band applies triangles in the same
+/// global list order, so the strict-`<` depth tie-break — and thus the output —
+/// is byte-identical to [`rasterize_seq`] (FR-6.3).
+#[cfg(feature = "parallel")]
+fn rasterize_parallel(fb: &mut Framebuffer, tris: &[DrawTri]) {
+    use crate::framebuffer::Band;
+
+    let (width, height, color, depth) = fb.buffers_mut();
+    if width == 0 || height == 0 {
+        return;
+    }
+    let threads = rayon::current_num_threads().max(1);
+    let band_rows = usize::from(height).div_ceil(threads * 4).max(1);
+    let chunk = band_rows * usize::from(width);
+
+    color
+        .par_chunks_mut(chunk)
+        .zip(depth.par_chunks_mut(chunk))
+        .enumerate()
+        .for_each(|(bi, (c, d))| {
+            let y_start = (bi * band_rows) as i32;
+            let y_end = y_start + (c.len() / usize::from(width)) as i32;
+            let mut band = Band::new(width, y_start, c, d);
+            for t in tris {
+                if t.y_max < y_start || t.y_min >= y_end {
+                    continue; // triangle doesn't touch this band
+                }
+                triangle::fill_triangle(&mut band, t.v[0], t.v[1], t.v[2], t.color, true);
+            }
+        });
 }
 
 /// Render a whole [`Scene`] into one framebuffer (FR-4.5). Built-in primitives
@@ -185,6 +309,43 @@ mod tests {
 
     fn nonbackground_count(fb: &Framebuffer) -> usize {
         fb.rows().flatten().filter(|&&c| c != Rgb::BLACK).count()
+    }
+
+    /// FR-6.3: the parallel band rasterizer must reproduce the sequential output
+    /// bit-for-bit. Drives both from one prepared triangle list (a ~2k-tri sphere
+    /// large enough to span many bands).
+    #[cfg(feature = "parallel")]
+    #[test]
+    fn fr6_3_parallel_matches_sequential_byte_for_byte() {
+        let sphere = primitives::sphere(24, 48); // ~2300 triangles
+        let (w, h) = (200u16, 120u16);
+        let tris = prepare_mesh(
+            &sphere,
+            Mat4::rotation_y(0.6) * Mat4::rotation_x(0.3),
+            &Camera::default(),
+            &DirectionalLight::default(),
+            ShadingMode::Gouraud,
+            Material::default(),
+            w,
+            h,
+        );
+        assert!(
+            tris.len() >= PARALLEL_MIN_TRIS,
+            "need enough tris to exercise bands"
+        );
+
+        let mut seq = Framebuffer::new(w, h);
+        rasterize_seq(&mut seq, &tris);
+        let mut par = Framebuffer::new(w, h);
+        rasterize_parallel(&mut par, &tris);
+
+        let seq_px: Vec<_> = seq.rows().flatten().copied().collect();
+        let par_px: Vec<_> = par.rows().flatten().copied().collect();
+        assert_eq!(seq_px, par_px, "parallel output diverged from sequential");
+        assert!(
+            nonbackground_count(&par) > 1000,
+            "sphere should fill a region"
+        );
     }
 
     #[test]

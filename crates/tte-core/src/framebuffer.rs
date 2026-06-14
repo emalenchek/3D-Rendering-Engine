@@ -81,6 +81,94 @@ impl Framebuffer {
     pub fn rows(&self) -> impl Iterator<Item = &[Rgb]> {
         self.color.chunks(usize::from(self.width).max(1))
     }
+
+    /// Raw color + depth buffers, for the parallel rasterizer to split into
+    /// row bands (FR-6.1). Returns `(width, height, color, depth)`.
+    pub(crate) fn buffers_mut(&mut self) -> (u16, u16, &mut [Rgb], &mut [f32]) {
+        (self.width, self.height, &mut self.color, &mut self.depth)
+    }
+}
+
+/// A depth-tested write surface the triangle rasterizer draws into. Implemented
+/// by a whole [`Framebuffer`] (sequential path) and by a [`Band`] of rows (the
+/// parallel path), so one `fill_triangle` serves both (FR-6.1).
+pub trait RasterTarget {
+    fn width(&self) -> u16;
+    /// First global row this target owns (inclusive).
+    fn y_start(&self) -> i32;
+    /// One past the last global row this target owns (exclusive).
+    fn y_end(&self) -> i32;
+    /// Depth-tested write at global `(x, y)`; ignores out-of-range coordinates.
+    fn plot(&mut self, x: i32, y: i32, depth: f32, color: Rgb) -> bool;
+}
+
+impl RasterTarget for Framebuffer {
+    fn width(&self) -> u16 {
+        self.width
+    }
+    fn y_start(&self) -> i32 {
+        0
+    }
+    fn y_end(&self) -> i32 {
+        i32::from(self.height)
+    }
+    fn plot(&mut self, x: i32, y: i32, depth: f32, color: Rgb) -> bool {
+        Framebuffer::plot(self, x, y, depth, color)
+    }
+}
+
+/// A contiguous range of framebuffer rows with its own borrowed color/depth
+/// slices — one parallel-rasterization tile. Tiles partition the frame into
+/// disjoint row bands, so workers never touch the same pixel (no atomics, no
+/// data races). Global `y` coordinates are translated to the local slice.
+#[derive(Debug)]
+pub struct Band<'a> {
+    width: u16,
+    y_start: i32,
+    rows: i32,
+    color: &'a mut [Rgb],
+    depth: &'a mut [f32],
+}
+
+impl<'a> Band<'a> {
+    /// Build a band starting at global row `y_start` over `color`/`depth` slices
+    /// of length `width * rows`.
+    pub fn new(width: u16, y_start: i32, color: &'a mut [Rgb], depth: &'a mut [f32]) -> Self {
+        let rows = (color.len() / usize::from(width).max(1)) as i32;
+        Self {
+            width,
+            y_start,
+            rows,
+            color,
+            depth,
+        }
+    }
+}
+
+impl RasterTarget for Band<'_> {
+    fn width(&self) -> u16 {
+        self.width
+    }
+    fn y_start(&self) -> i32 {
+        self.y_start
+    }
+    fn y_end(&self) -> i32 {
+        self.y_start + self.rows
+    }
+    fn plot(&mut self, x: i32, y: i32, depth: f32, color: Rgb) -> bool {
+        if x < 0 || y < self.y_start || y >= self.y_start + self.rows || x >= i32::from(self.width)
+        {
+            return false;
+        }
+        let i = (y - self.y_start) as usize * usize::from(self.width) + x as usize;
+        if depth < self.depth[i] {
+            self.depth[i] = depth;
+            self.color[i] = color;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]

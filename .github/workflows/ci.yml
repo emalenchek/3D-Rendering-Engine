@@ -47,6 +47,23 @@ jobs:
       - name: Doctests (nextest does not run these)
         run: cargo test --workspace --doc
 
+  features:
+    name: Feature matrix (NFR-12)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every feature combination must pass the full suite incl. golden frames.
+        # The parallel path is asserted byte-identical to scalar (FR-6.3), so the
+        # same goldens hold under both.
+        features: ["--no-default-features", "", "--features parallel"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test (tte-core ${{ matrix.features }})
+        run: cargo test -p tte-core ${{ matrix.features }}
+
   wasm:
     name: WASM frontend
     runs-on: ubuntu-latest
