@@ -112,30 +112,22 @@ fn prepare_mesh(
     // World-space positions and normals. The model's linear part transforms
     // normals correctly for rotation/uniform scale; non-uniform scale would
     // need the inverse-transpose — deferred with the material system.
-    let world_pos: Vec<Vec3> = mesh
-        .positions
-        .iter()
-        .map(|&p| transform_point(model, p))
-        .collect();
-    let world_nrm: Vec<Vec3> = mesh
-        .normals
-        .iter()
-        .map(|&n| transform_dir(model, n))
-        .collect();
-    let clip: Vec<Vec4> = world_pos
-        .iter()
-        .map(|&p| view_proj * p.extend(1.0))
-        .collect();
+    let world_pos = map_collect(&mesh.positions, |&p| transform_point(model, p));
+    let world_nrm = map_collect(&mesh.normals, |&n| transform_dir(model, n));
+    let clip = map_collect(&world_pos, |&p| view_proj * p.extend(1.0));
 
-    let mut tris: Vec<DrawTri> = Vec::with_capacity(mesh.triangles.len());
-    for &[ia, ib, ic] in &mesh.triangles {
+    // Project + shade + near-cull each triangle. `filter_map_collect` keeps mesh
+    // order (so the rasterizer's z tie-break stays deterministic) while running
+    // in parallel when the `parallel` feature is on (parallelizing the geometry
+    // stage matters: at high triangle counts it dominates the frame — Amdahl).
+    filter_map_collect(&mesh.triangles, |&[ia, ib, ic]| {
         let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
         let (ca, cb, cc) = (clip[ia], clip[ib], clip[ic]);
 
         // Near-plane cull (FR-1.3 approach): drop any triangle with a vertex at
         // or behind the near plane rather than splitting it (Phase 5 hardening).
         if behind_near(ca) || behind_near(cb) || behind_near(cc) {
-            continue;
+            return None;
         }
 
         let intensity = |vertex_normal: Vec3, face_normal: Vec3| match shading {
@@ -151,14 +143,36 @@ fn prepare_mesh(
         ];
         let y_min = v.iter().map(|p| p.y.floor() as i32).min().unwrap();
         let y_max = v.iter().map(|p| p.y.ceil() as i32).max().unwrap();
-        tris.push(DrawTri {
+        Some(DrawTri {
             v,
             color: material.base_color,
             y_min,
             y_max,
-        });
-    }
-    tris
+        })
+    })
+}
+
+/// Order-preserving `map` → `Vec`, parallel under the `parallel` feature.
+#[cfg(feature = "parallel")]
+fn map_collect<T: Sync, U: Send>(items: &[T], f: impl Fn(&T) -> U + Sync + Send) -> Vec<U> {
+    items.par_iter().map(f).collect()
+}
+#[cfg(not(feature = "parallel"))]
+fn map_collect<T, U>(items: &[T], f: impl Fn(&T) -> U) -> Vec<U> {
+    items.iter().map(f).collect()
+}
+
+/// Order-preserving `filter_map` → `Vec`, parallel under the `parallel` feature.
+#[cfg(feature = "parallel")]
+fn filter_map_collect<T: Sync, U: Send>(
+    items: &[T],
+    f: impl Fn(&T) -> Option<U> + Sync + Send,
+) -> Vec<U> {
+    items.par_iter().filter_map(f).collect()
+}
+#[cfg(not(feature = "parallel"))]
+fn filter_map_collect<T, U>(items: &[T], f: impl Fn(&T) -> Option<U>) -> Vec<U> {
+    items.iter().filter_map(f).collect()
 }
 
 /// Draw a prepared triangle list into `fb`. Dispatches to the parallel band

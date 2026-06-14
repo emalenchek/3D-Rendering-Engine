@@ -67,5 +67,23 @@ fn bench_solid(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_wireframe, bench_solid);
+/// FR-6.4 / NFR-10: the large-mesh, high-resolution workload the parallel and
+/// SIMD speedups are measured against (~100k triangles at 400×200). Compare
+/// `cargo bench` (parallel feature on) vs `cargo bench --no-default-features`
+/// (scalar) to read the NFR-10 (≥3×) speedup; small working sets don't show it,
+/// which is why the target is defined on this bench (report 09).
+fn bench_solid_large(c: &mut Criterion) {
+    let camera = Camera::default();
+    let model = Mat4::rotation_y(0.6) * Mat4::rotation_x(0.4);
+    let sphere = uv_sphere(160, 320); // 2·160·320 = 102_400 triangles
+    let opts = ShadeOptions::default();
+    let mut group = c.benchmark_group("solid_100k_tri");
+    group.sample_size(20); // a heavy frame; fewer samples keeps the run quick
+    group.bench_function("sphere_400x200", |b| {
+        b.iter(|| render_solid(black_box(&sphere), model, &camera, 400, 200, opts))
+    });
+    group.finish();
+}
+
+criterion_group!(benches, bench_wireframe, bench_solid, bench_solid_large);
 criterion_main!(benches);
