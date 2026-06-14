@@ -13,7 +13,7 @@
 //! fixed operation order (no FMA contraction) so it is reproducible too.
 
 use crate::color::Rgb;
-use crate::framebuffer::Framebuffer;
+use crate::framebuffer::RasterTarget;
 
 /// Sub-pixel precision: coordinates are snapped to a 1/16-pixel grid before the
 /// integer edge functions are evaluated. 4 bits is plenty at terminal/browser
@@ -66,8 +66,8 @@ fn is_top_left(s: Snapped, e: Snapped) -> bool {
 /// `cull_back`: skip triangles whose screen-space winding faces away from the
 /// camera. In our y-down screen space a front face (CCW in the y-up NDC the
 /// projection produces) has **negative** signed area.
-pub fn fill_triangle(
-    fb: &mut Framebuffer,
+pub fn fill_triangle<T: RasterTarget>(
+    fb: &mut T,
     v0: Vertex,
     v1: Vertex,
     v2: Vertex,
@@ -100,7 +100,7 @@ pub fn fill_triangle(
     };
     let area_f = area as f32;
 
-    let (min_x, max_x, min_y, max_y) = bounds(fb, [p0, p1, p2]);
+    let (min_x, max_x, min_y, max_y) = bounds(fb.width(), fb.y_start(), fb.y_end(), [p0, p1, p2]);
     if min_x > max_x || min_y > max_y {
         return false;
     }
@@ -154,23 +154,26 @@ pub fn fill_triangle(
     drew
 }
 
-/// Integer pixel bounding box of the triangle, clamped to the framebuffer.
-fn bounds(fb: &Framebuffer, vs: [Snapped; 3]) -> (i32, i32, i32, i32) {
+/// Integer pixel bounding box of the triangle, clamped to the target's columns
+/// (`0..width`) and its owned row band (`y_start..y_end`) — so a parallel band
+/// only iterates the rows it owns (FR-6.1).
+fn bounds(width: u16, y_start: i32, y_end: i32, vs: [Snapped; 3]) -> (i32, i32, i32, i32) {
     let min = |sel: fn(Snapped) -> i64| vs.iter().map(|&v| sel(v)).min().unwrap();
     let max = |sel: fn(Snapped) -> i64| vs.iter().map(|&v| sel(v)).max().unwrap();
-    // Floor/ceil to whole pixels via Euclidean division on the sub-pixel grid.
+    // Floor to whole pixels via Euclidean division on the sub-pixel grid.
     let px = |sub: i64| sub.div_euclid(SUBPIXEL) as i32;
     (
         px(min(|v| v.x)).max(0),
-        px(max(|v| v.x)).min(i32::from(fb.width()) - 1),
-        px(min(|v| v.y)).max(0),
-        px(max(|v| v.y)).min(i32::from(fb.height()) - 1),
+        px(max(|v| v.x)).min(i32::from(width) - 1),
+        px(min(|v| v.y)).max(y_start),
+        px(max(|v| v.y)).min(y_end - 1),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::framebuffer::Framebuffer;
 
     fn vert(x: f32, y: f32, depth: f32, intensity: f32) -> Vertex {
         Vertex {
