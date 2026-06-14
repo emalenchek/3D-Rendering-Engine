@@ -11,7 +11,7 @@ members = ["crates/tte-core", "crates/tte-cli", "crates/tte-wasm"]
 
 # Fields shared by all workspace crates (referenced via `field.workspace = true`).
 [workspace.package]
-version = "1.0.0"
+version = "2.0.0"
 edition = "2024"
 rust-version = "1.94"
 license = "MIT OR Apache-2.0"

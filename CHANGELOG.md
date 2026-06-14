@@ -1,5 +1,34 @@
 # Changelog
 
+## v2.0.0 — Browser frontend + performance push
+
+The engine now runs in the browser *and* renders in parallel on multiple cores —
+the two original "portable core, two frontends" and "performant" goals. Grounded in
+de-risking research (`docs/research/07`–`10`); scope in `docs/04-v2.0-scope.md`.
+
+### Browser / WASM frontend (Phase 5)
+- New `tte-wasm` crate: a `wasm-bindgen` `Renderer` over `tte-core` — load OBJ/DSL,
+  orbit, render, and pull frames out as typed arrays. No `web-sys` (data-only boundary).
+- Core `web_frame` export: `Framebuffer` → per-cell `{glyph, fg, bg}`, shared natively
+  and in WASM (identical frames).
+- `web/` demo: glyph-atlas Canvas2D renderer, mouse **and touch** orbit/zoom, live scene
+  editor, presets. Build via `web/build.sh` (cargo → wasm-bindgen → wasm-opt).
+- WASM binary ~98 KB raw / ~47 KB gzipped (well under the 250 KB budget).
+- `wasm-bindgen-test` smoke tests run the real module in Node; CI `wasm` job.
+
+### Performance push (Phase 6)
+- **Integer edge-function rasterization**: exact sub-pixel `orient2d` + top-left rule —
+  deterministic *and* watertight (replaces the float-coverage seam workaround).
+- **Tile-based multithreaded rasterization** (rayon) plus a parallelized geometry stage,
+  behind a `parallel` feature (default native; off for WASM). Byte-identical to the
+  scalar path (proven by a parity test). ~1.9× on a 4-core machine.
+- Expanded benchmarks (100k-triangle / 400×200); CI feature matrix.
+- Deferred with rationale: SIMD inner loop (FR-6.2) and WASM threads (FR-6.5) — the
+  integer-edge foundation leaves both as clean reserved follow-ups.
+
+### Notes
+- `tte` CLI and terminal output are unchanged and fully compatible.
+
 ## v1.0.0 — MVP (text-encoded 3D rendering engine)
 
 First release. A from-scratch software 3D renderer that is text-encoded in both
