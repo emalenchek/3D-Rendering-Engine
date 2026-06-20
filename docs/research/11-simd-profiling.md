@@ -168,5 +168,129 @@ recommendation — pending more sources.)
   (https://github.com/WebAssembly/relaxed-simd/blob/main/proposals/relaxed-simd/Overview.md).
   Confidence: HIGH.
 
-(Q4 expansion on reductions/denormals/x87, Q6 speedup numbers, and the
-Recommendation + NFR sections still pending.)
+---
+
+## Q4 (expanded). Determinism hazards & the byte-identical question
+
+Four hazards that can make SIMD != scalar bit-for-bit:
+
+1. **FMA contraction (the main one).** `mul_add`/`simd_fma` -> hardware FMA (single
+   rounding) where available, plain mul/add elsewhere -> *different result on AVX2-FMA vs
+   SSE2-only / different NEON parts*. **Verified by two independent primary sources** that
+   `mul_add` lowers to `llvm.fma` (always-fused, deterministic-per-op) while Rust does NOT
+   auto-contract `a*b + c` (it uses `llvm.fmuladd`/relaxed only for the explicit
+   nondeterministic path, and never enables `-ffp-contract=fast` on `*`/`+`). Sources:
+   rust-lang/libs-team #712 (https://github.com/rust-lang/libs-team/issues/712); RFC 3514
+   float-semantics; rust-lang/portable-simd #102. **Mitigation: never call `mul_add` in the
+   transform kernel** — write the matrix multiply as explicit `*` then `+`. Confidence: HIGH.
+2. **Reduction/operation ordering.** Float `+`/`*` are not associative, so a tree/SIMD-lane
+   reduction can differ from a left-to-right scalar sum. For Mat4xVec4 each output component
+   is a *fixed* sum of exactly 4 products — if the SIMD kernel performs the additions in the
+   **same order** as the scalar code (e.g. `((m0*x + m1*y) + m2*z) + m3*w`), results are
+   identical. The hazard only appears in horizontal reductions/dot-products with a different
+   accumulation order. **Mitigation: match the scalar add order in the kernel.** Source:
+   Gaffer-On-Games "Floating Point Determinism"; general IEEE-754 non-associativity. Conf: HIGH.
+3. **x87 vs SSE2.** Only a problem on **32-bit x86 without SSE2** (80-bit excess precision,
+   inconsistent rounding). All 64-bit x86 and aarch64/wasm use IEEE single-precision SSE2/
+   NEON/v128. `wide` guarantees >= SSE2 on x86. So for the targets that matter this is a
+   non-issue; just don't build a no-SSE2 i686 target. Source: rust-lang/rust #114479,
+   Intel FP docs. Confidence: HIGH.
+4. **Denormals / FTZ-DAZ.** Differs only if MXCSR flush-to-zero is toggled. **Rust does not
+   change MXCSR by default**, and `wide` does not enable FTZ — so denormals behave the same
+   in scalar and SIMD. Avoid third-party code that flips FTZ. Source: Intel denorm docs,
+   rust-lang/rust discussions. Confidence: HIGH.
+
+**Verdict on byte-identical:** YES, byte-identical scalar==SIMD is realistic for f32
+Mat4xVec4 across SSE2/AVX2/NEON/wasm **iff** the kernel (a) never uses `mul_add`/FMA, (b)
+uses the same operation/accumulation order as the scalar reference, (c) targets are SSE2+
+(no x87). The basic ops `+ - * /` are IEEE-754 correctly-rounded and identical across these
+ISAs. The existing golden-frame + parity test then keeps it honest. If at some future point
+an FMA fast-path is wanted for speed, switch the parity test to an explicit small-ULP
+tolerance and document it — but that is **not** needed for v2.1.
+
+## Q6. Realistic speedup & NFR calibration
+
+- The geometry stage is partly **memory-bandwidth-bound** (100k verts stream through L2/L3),
+  so SIMD will land well under the 8x (f32x8) compute peak. Literature: AoS->SoA gives
+  ~2-4x at small/medium sizes, tapering as the set exceeds cache. Source: HAL data-layout
+  paper. Confidence: MEDIUM.
+- Concrete Rust math data (mathbench): **horizontal** SIMD (glam) is ~1.5-2.1x over
+  nalgebra-scalar and ~2.7-3.8x over cgmath for Mat4 transform-point/vector. **Vertical**
+  AoSoA SIMD (ultraviolet `wide` f32x4) shows ~**1.2-1.7x throughput** over scalar in the
+  batched bench. So for *this* transform-throughput workload a realistic, honest target is
+  **~1.5x** end-to-end on the geometry stage, not 2x+. Source:
+  https://github.com/bitshifter/mathbench-rs. Confidence: MEDIUM-HIGH.
+- Old fill-stage NFR (>=2x) does NOT transfer: the frame is setup/geometry-bound here, and
+  the transform is bandwidth-limited, so a >=2x geometry claim would be dishonest.
+
+---
+
+## Recommended approach for v2.1
+
+1. **Confirm the hot stage first (gate the whole effort).** Run **samply** (or cargo
+   flamegraph) on the 100k-tri @ 400x200 scene with `CARGO_PROFILE_RELEASE_DEBUG=true` +
+   `-C force-frame-pointers=yes`. Verify Mat4xVec4 transform + edge-function setup dominate
+   over the fill loop. Run `perf stat` to confirm whether the transform is compute- or
+   bandwidth-bound. If the profile does NOT show geometry dominance, stop and re-scope.
+2. **SIMD crate: `wide`** (stable, fixed lane widths, SSE2/AVX2/NEON/wasm-simd128 with a
+   scalar fallback, no auto-FMA). Use **`f32x8`** for the transform kernel (degrades cleanly
+   to 2x SSE on baseline, 1x AVX2 register, NEON pairs, wasm). std::simd is still nightly →
+   excluded. Defer `pulp`/`multiversion` unless profiling shows a runtime-AVX2 uplift is
+   worth a second codegen on an SSE2-baseline binary.
+3. **Vectorize the geometry stage first** (the proven hot path): convert vertex positions to
+   **SoA/AoSoA**, batch the Mat4xVec4 transform 8 vertices at a time with `wide::f32x8`,
+   broadcasting matrix elements. Keep the edge-function/`orient2d` integer setup exact; if
+   profiling shows setup is also hot, vectorize the float pre-transform feeding it, not the
+   i64 exact math. Do NOT wholesale-adopt glam (horizontal-only; risks perturbing the float
+   inputs to the exact rasterizer).
+4. **Determinism strategy: keep BYTE-IDENTICAL** (no tolerance). Achievable because (a) the
+   kernel forbids `mul_add`/FMA, (b) it replays the scalar add order, (c) targets are SSE2+.
+   Guard with the existing golden frames + parity test (now also run the parity test on the
+   wasm build and, if CI allows, an aarch64 runner). Rationale: the project's identity is
+   "exact/deterministic"; a documented-tolerance path is strictly worse here and unnecessary
+   for an f32 affine transform.
+5. **CI cost tracking:** add **iai-callgrind** benches per stage (transform / setup / fill)
+   for deterministic instruction-count regression gating; keep **criterion** for the
+   wall-clock speedup numbers that back the NFRs.
+
+## Proposed NFRs (v2.1.0)
+
+- **NFR-1 (speedup):** geometry/transform stage **>= 1.5x** faster than scalar at 100k tris
+  @ 400x200, measured by criterion wall-clock on the project's x86-64 AVX2 CI host.
+  (Stretch: >= 2x if `perf stat` shows the stage is compute- rather than bandwidth-bound.)
+- **NFR-2 (parity):** SIMD output **byte-identical** to scalar — existing golden frames +
+  parity test pass unchanged on x86-64 (SSE2 baseline AND AVX2), and on the wasm-simd128
+  build; ideally also on aarch64 NEON in CI.
+- **NFR-3 (stable toolchain):** builds and passes on stable Rust, no nightly features.
+- **NFR-4 (portability/fallback):** correct results with `wide` scalar fallback (no SIMD
+  target-feature), on SSE2 baseline, AVX2, NEON, and wasm `+simd128`.
+- **NFR-5 (no regression):** iai-callgrind per-stage instruction counts do not regress for
+  the scalar path; the rayon `parallel` parity test still proves byte-identity.
+
+---
+
+## Source list (confidence)
+
+- Rust Performance Book — Profiling — HIGH — https://nnethercote.github.io/perf-book/profiling.html
+- flamegraph-rs — HIGH — https://github.com/flamegraph-rs/flamegraph
+- samply — HIGH — https://github.com/mstange/samply
+- iai-callgrind / gungraun — HIGH — https://github.com/iai-callgrind/iai-callgrind , https://lib.rs/crates/iai-callgrind
+- wide (README + docs) — HIGH — https://github.com/Lokathor/wide , https://docs.rs/wide
+- rust-lang/portable-simd (#102, std::simd nightly) — HIGH — https://github.com/rust-lang/portable-simd
+- rust-lang/libs-team #712 (mul_add = llvm.fma, deterministic) — HIGH — https://github.com/rust-lang/libs-team/issues/712
+- RFC 3514 float-semantics — HIGH — https://rust-lang.github.io/rfcs/3514-float-semantics.html
+- siboehm Inlining/FMA/FP-consistency — MEDIUM — https://siboehm.com/articles/23/Inlining-FMA-FP-consistency
+- Gaffer On Games — Floating Point Determinism — MEDIUM — https://gafferongames.com/post/floating_point_determinism/
+- pulp — MEDIUM — https://docs.rs/pulp
+- multiversion (calebzulawski) — HIGH — https://crates.io/crates/multiversion , https://docs.rs/multiversion
+- Shnatsel "State of SIMD in Rust 2025" — MEDIUM — https://shnatsel.medium.com/the-state-of-simd-in-rust-in-2025-32c263e5f53d
+- alexheretic Getting rustc to use AVX2 — HIGH — https://alexheretic.github.io/posts/auto-avx2/
+- glam-rs — HIGH — https://github.com/bitshifter/glam-rs
+- mathbench-rs (concrete Mat4 transform numbers) — HIGH — https://github.com/bitshifter/mathbench-rs
+- rustsim AoSoA SIMD blog — HIGH — https://www.rustsim.org/blog/2020/03/23/simd-aosoa-in-nalgebra/
+- HAL data-layout/SIMD abstraction — MEDIUM — https://hal.science/hal-01915529/document
+- WebAssembly/relaxed-simd Overview (relaxed-fma nondeterminism) — HIGH — https://github.com/WebAssembly/relaxed-simd/blob/main/proposals/relaxed-simd/Overview.md
+- rustc wasm32 platform support — HIGH — https://doc.rust-lang.org/rustc/platform-support/wasm32-unknown-unknown.html
+- rust-lang/rust x87/SSE2 determinism (#114479) — HIGH
+- testmuai wasm SIMD browser support — MEDIUM — https://www.testmuai.com/learning-hub/wasm-simd-browser-support/
+
