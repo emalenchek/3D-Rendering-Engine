@@ -95,7 +95,7 @@ Project facts (from repo, verified):
 ## Q3 — Copyright line / year / holder / SPDX headers
 
 - **MIT `[year] [fullname]` placeholder:** put a real copyright line, e.g.
-  `Copyright (c) 2026 Evan Malenchek` (or your preferred public handle). A handle
+  `Copyright (c) 2026 Ethan Malenchek` (or your preferred public handle). A handle
   is legally acceptable; a real name is stronger for provenance. For a project
   expecting outside PRs, `Copyright (c) 2026 The tte contributors` is a common,
   low-maintenance choice (avoids enumerating contributors). MEDIUM.
@@ -216,7 +216,7 @@ to the dual license.
 ### Files to add (checklist)
 
 - [ ] `LICENSE-MIT` at repo root — standard MIT text, first line:
-      `Copyright (c) 2026 Evan Malenchek` (or `The tte contributors`).
+      `Copyright (c) 2026 Ethan Malenchek` (or `The tte contributors`).
 - [ ] `LICENSE-APACHE` at repo root — verbatim Apache-2.0 text
       (https://www.apache.org/licenses/LICENSE-2.0.txt), unmodified, no NOTICE needed.
 - [ ] README "## License" + "## Contribution" stanza (verbatim text in Q2).
