@@ -24,10 +24,21 @@ rm -rf "$OUT"
 wasm-bindgen "$WASM" --out-dir "$OUT" --target web --no-typescript
 
 # Optional size pass: shrink with wasm-opt if binaryen is installed.
+# Modern rustc/LLVM emit the post-MVP feature set by default (bulk-memory,
+# nontrapping-fptoint, sign-ext, …); wasm-opt rejects them as invalid unless
+# the same features are enabled, so mirror the toolchain's default set here.
 BG="$OUT/tte_wasm_bg.wasm"
+WASM_OPT_FEATURES=(
+  --enable-bulk-memory
+  --enable-nontrapping-float-to-int
+  --enable-sign-ext
+  --enable-mutable-globals
+  --enable-multivalue
+  --enable-reference-types
+)
 if command -v wasm-opt >/dev/null 2>&1; then
   echo "› wasm-opt -Oz"
-  wasm-opt -Oz "$BG" -o "$BG"
+  wasm-opt -Oz "${WASM_OPT_FEATURES[@]}" "$BG" -o "$BG"
 else
   echo "› wasm-opt not found — skipping (install binaryen to shrink further)"
 fi
