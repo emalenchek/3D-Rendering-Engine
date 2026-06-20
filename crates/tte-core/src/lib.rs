@@ -19,6 +19,8 @@ pub mod cell;
 pub mod color;
 pub mod dsl;
 pub mod framebuffer;
+#[cfg(feature = "simd")]
+mod geom_simd;
 pub mod math;
 pub mod mesh;
 pub mod obj;

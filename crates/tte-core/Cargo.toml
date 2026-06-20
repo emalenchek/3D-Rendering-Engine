@@ -17,6 +17,10 @@ workspace = true
 # sets default-features = false.
 default = ["parallel"]
 parallel = ["dep:rayon"]
+# `simd` (opt-in, off by default): vectorize the per-triangle geometry stage with
+# `wide::f32x8` (FR-7.2/7.3). Byte-identical to the scalar path (FR-7.4); the
+# rasterizer is untouched. The wasm build enables it via `-C target-feature=+simd128`.
+simd = ["dep:wide"]
 
 [dependencies]
 # Regular (not dev) dependency so the AbsDiffEq/RelativeEq impls on Vec3/Mat4
@@ -25,6 +29,9 @@ parallel = ["dep:rayon"]
 approx = "0.5"
 # Work-stealing data parallelism for the tile rasterizer (FR-6.1), opt-in.
 rayon = { version = "1", optional = true }
+# Stable portable SIMD (`f32x8`) for the geometry-stage kernel (FR-7.2), opt-in.
+# Fixed-width types lower to SSE2/AVX2/NEON/wasm-simd128 with a scalar fallback.
+wide = { version = "0.7", optional = true }
 
 [dev-dependencies]
 # Test stack — see docs/02-test-harness.md for the rationale behind each.
