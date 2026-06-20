@@ -66,7 +66,8 @@ Project facts (from repo):
   file/dir beginning with `_` and adds latency. The repo currently has **no `.nojekyll`**
   — must add `web/.nojekyll`. (`pkg/` itself has no underscore, but keep `.nojekyll` as
   the canonical "serve verbatim" switch.)
-- **Base path / subpath:** project site is served at `https://emalenchek.github.io/3d-rendering-engine/`.
+- **Base path / subpath:** project site is served at `https://emalenchek.github.io/3D-Rendering-Engine/`
+  (the repo-name path segment is **case-sensitive** — it must match `3D-Rendering-Engine` exactly).
   All asset references MUST be relative (no leading-slash absolute paths). VERIFIED OK:
   `index.html` → `./app.js`; `app.js` → `./pkg/tte_wasm.js`, `./renderer.js`. The
   wasm-bindgen `--target web` glue loads `tte_wasm_bg.wasm` relative to the JS module via
