@@ -1,0 +1,26 @@
+# cargo-about config — generates THIRD-PARTY-LICENSES.md (compliance, report 13).
+# Run: cargo about generate about.hbs > THIRD-PARTY-LICENSES.md
+#
+# Licenses we accept in the dependency tree (mirrors deny.toml; all permissive,
+# confirmed by docs/research/13b-dependency-license-audit.md).
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "Unicode-3.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+]
+
+# Attribute what we actually ship: skip dev-only crates (test/bench tooling is
+# not redistributed in the binary or wasm).
+ignore-dev-dependencies = true
+
+# Resolve licenses for the targets we distribute (native trio + wasm).
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "wasm32-unknown-unknown",
+]

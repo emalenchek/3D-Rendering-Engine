@@ -78,3 +78,24 @@ Full setup guide: [docs/03-dev-setup.md](docs/03-dev-setup.md)
 - **Output: per-cell z-buffer + swappable presenters** — ASCII luminance ramp, half-block truecolor, Braille wireframe; diff-based escape emission.
 - **DSL: strictly declarative, KDL-style grammar** with a glTF-like content model; heavy geometry imported from OBJ/glTF, never inlined.
 - **MVP ≈ 35–65 h / ~2 KLOC** across 4 phases: terminal wireframe → shaded renderer → interactive orbit → scene DSL. WASM frontend and SIMD/multithreading follow.
+
+## License
+
+Licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or
+  <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+Third-party dependency licenses are summarized in
+[THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) (all permissive; see
+[docs/research/13b-dependency-license-audit.md](docs/research/13b-dependency-license-audit.md)).
+
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
