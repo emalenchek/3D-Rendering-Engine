@@ -25,3 +25,6 @@ lcov.info
 
 # Generated WASM bindings (built by web/build.sh; not committed)
 /web/pkg/
+
+# Node deps for the Playwright demo smoke test (scripts/); installed in CI
+node_modules/
