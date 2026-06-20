@@ -83,6 +83,33 @@ jobs:
       - name: Generate bindings + check size budget (NFR-7)
         run: ./web/build.sh
 
+  demo-smoke:
+    name: Demo smoke (Playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.123,wasm-opt
+      - name: Build wasm + bindings
+        run: ./web/build.sh
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Playwright + Chromium
+        working-directory: scripts
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Serve web/ and smoke-test the demo boots
+        run: |
+          (cd web && python3 -m http.server 8000 >/dev/null 2>&1 &)
+          node scripts/smoke.mjs
+
   deny:
     name: Dependency vetting
     runs-on: ubuntu-latest

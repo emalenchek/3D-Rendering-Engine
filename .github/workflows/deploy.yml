@@ -1,0 +1,54 @@
+# Auto-deploy the WASM demo (web/) to GitHub Pages on merge to main.
+# Official Pages flow: configure-pages -> upload-pages-artifact -> deploy-pages.
+# See docs/research/12-github-pages-deploy.md. One-time manual step:
+# Settings -> Pages -> Source = "GitHub Actions".
+name: Deploy demo to Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Serialize deploys; don't cancel an in-flight publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          # Pin to the crate's wasm-bindgen; binaryen gives the wasm-opt -Oz size pass.
+          tool: wasm-bindgen@0.2.123,wasm-opt
+      - name: Build wasm + bindings (also enforces NFR-7 size budget)
+        run: ./web/build.sh
+      - name: Bundle license attribution into the published site
+        run: cp LICENSE-MIT LICENSE-APACHE THIRD-PARTY-LICENSES.md web/
+      - name: Ensure Jekyll is disabled
+        run: touch web/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
