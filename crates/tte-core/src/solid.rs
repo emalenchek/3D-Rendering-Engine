@@ -410,6 +410,84 @@ mod tests {
         assert_eq!(a, b);
     }
 
+    /// FR-7.1 profile gate (run manually, not a CI test):
+    /// `cargo test --release -p tte-core --no-default-features prof_stage_split -- --ignored --nocapture`
+    /// Splits the `solid_100k_tri @ 400×200` frame into the geometry stage
+    /// (`prepare_mesh`: transforms + shade + project) vs rasterization (`rasterize`:
+    /// edge-function fill + z-test) and prints the wall-clock share of each. The
+    /// SIMD effort (FR-7.2+) is only justified if the geometry stage dominates.
+    #[test]
+    #[ignore = "manual profiling harness; see docs/research/11b-profile-results.md"]
+    fn prof_stage_split() {
+        use std::time::Instant;
+
+        // The benches' 100k-tri sphere at 400×200 (see benches/raster.rs).
+        let sphere = crate::primitives::sphere(160, 320);
+        let n_tris = sphere.triangles.len();
+        let (w, h) = (400u16, 200u16);
+        let model = Mat4::rotation_y(0.6) * Mat4::rotation_x(0.4);
+        let camera = Camera::default();
+        let light = DirectionalLight::default();
+
+        let prepare = || {
+            prepare_mesh(
+                &sphere,
+                model,
+                &camera,
+                &light,
+                ShadingMode::default(),
+                Material::default(),
+                w,
+                h,
+            )
+        };
+
+        // Warm caches / branch predictors, and report how many tris survive cull.
+        let warm = prepare();
+        let n_drawn = warm.len();
+
+        let iters = 30;
+        let mut t_geo = std::time::Duration::ZERO;
+        let mut t_ras = std::time::Duration::ZERO;
+        for _ in 0..iters {
+            let t0 = Instant::now();
+            let tris = prepare();
+            t_geo += t0.elapsed();
+
+            let mut fb = Framebuffer::new(w, h);
+            let t1 = Instant::now();
+            rasterize(&mut fb, &tris);
+            t_ras += t1.elapsed();
+            std::hint::black_box(&fb);
+        }
+        // Sub-split the geometry stage: the vectorizable per-vertex transform
+        // passes (world_pos / world_nrm / clip — the `Mat4 × Vec4` work FR-7.2
+        // targets) vs everything else in prepare_mesh (per-triangle cull/shade/
+        // project). Replays the same three passes prepare_mesh runs.
+        let view_proj = camera.projection_matrix(w, h) * camera.view_matrix();
+        let mut t_xf = std::time::Duration::ZERO;
+        for _ in 0..iters {
+            let t0 = Instant::now();
+            let world_pos = map_collect(&sphere.positions, |&p| transform_point(model, p));
+            let world_nrm = map_collect(&sphere.normals, |&n| transform_dir(model, n));
+            let clip = map_collect(&world_pos, |&p| view_proj * p.extend(1.0));
+            t_xf += t0.elapsed();
+            std::hint::black_box((&world_nrm, &clip));
+        }
+
+        let geo_us = t_geo.as_secs_f64() * 1e6 / iters as f64;
+        let ras_us = t_ras.as_secs_f64() * 1e6 / iters as f64;
+        let xf_us = t_xf.as_secs_f64() * 1e6 / iters as f64;
+        let total = geo_us + ras_us;
+        let n_verts = sphere.positions.len();
+        println!("\n--- FR-7.1 stage split: solid_100k_tri @ {w}x{h} ---");
+        println!("triangles: {n_tris} ({n_drawn} drawn after cull); vertices: {n_verts}");
+        println!("geometry  (prepare_mesh): {geo_us:8.1} us/frame  ({:5.1}%)", 100.0 * geo_us / total);
+        println!("  └ vertex transforms:    {xf_us:8.1} us/frame  ({:5.1}% of frame, {:5.1}% of geometry)", 100.0 * xf_us / total, 100.0 * xf_us / geo_us);
+        println!("raster    (rasterize):    {ras_us:8.1} us/frame  ({:5.1}%)", 100.0 * ras_us / total);
+        println!("total:                    {total:8.1} us/frame");
+    }
+
     #[test]
     fn fr2_5_far_face_is_occluded_by_near_face() {
         // The cube is opaque: the z-buffer must hide its back faces, so the
