@@ -100,4 +100,73 @@ recommendation — pending more sources.)
 
 ---
 
-(Q3, Q5, Q6, Q7 and the Recommendation/NFR sections pending.)
+---
+
+## Q3. Vectorizing the geometry stage (Mat4xVec4)
+
+- **AoS vs SoA/AoSoA.** AoS (interleaved x,y,z,w per vertex) wastes SIMD lanes for a
+  "transform many vertices" loop. Convert positions to **SoA / AoSoA** (one lane per
+  vertex): hold `f32x4`/`f32x8` of xs, ys, zs, ws, multiply by *broadcast* matrix elements.
+  Literature shows **2-4x** for AoS->SoA at small/medium sizes, tapering as the working set
+  exceeds cache. Source: HAL "Data layout and SIMD abstraction layers"
+  (https://hal.science/hal-01915529/document); nadavrot matmul gist
+  (https://gist.github.com/nadavrot/5b35d44e8ba3dd718e595e40184d03f0). Confidence: MEDIUM.
+- **Two ways to vectorize a Mat4xVec4:**
+  - *Horizontal* (glam-style): one vertex per 128-bit register, 4 dot products / shuffles.
+    Easy drop-in, ~Vec4 width, no batching. glam's Vec4/Mat4 already do this on
+    x86/x86_64/wasm32. Source: https://github.com/bitshifter/glam-rs. Confidence: HIGH.
+  - *Vertical* (AoSoA, ultraviolet/nalgebra-style): transform 4 (f32x4) or 8 (f32x8)
+    vertices simultaneously; each output component = sum of 4 broadcast-mul terms. Best
+    throughput for the "100k tiny tris" transform-bound workload; uses plain mul+add (16
+    muls + 12 adds per batch), no horizontal shuffles. Sources: rustsim AoSoA blog,
+    mathbench-rs. Confidence: HIGH.
+- **glam adoption vs hand-rolled.** glam is fast and correct but **horizontal** — it does
+  not batch vertices, so it would not exploit the transform-throughput headroom as well as a
+  `wide`-backed AoSoA kernel. Also, switching the engine's exact integer rasterizer math to
+  glam risks changing the float results that feed `orient2d` setup. Recommendation: keep the
+  hand-rolled scalar path as the golden reference and add a **`wide` f32x8 AoSoA transform
+  kernel** as the vectorized path, rather than wholesale-adopting glam. Confidence: MEDIUM.
+- **Cache/bandwidth.** A vertex buffer of 100k verts x 16 B (xyzw f32) = 1.6 MB > L2; the
+  transform loop streams memory, so it is partly **bandwidth-bound** — expect SIMD speedup
+  below the theoretical 8x. Confirm with `perf stat` (Q1) before promising numbers.
+
+## Q5. target_feature + runtime detection on stable
+
+- **Baseline.** x86-64 guarantees **SSE2**; `wide` always compiles to at least SSE2 with no
+  runtime check needed. aarch64 always has **NEON**. wasm needs explicit `+simd128`.
+  Source: wide README (https://github.com/Lokathor/wide), rustc wasm32 platform docs
+  (https://doc.rust-lang.org/rustc/platform-support/wasm32-unknown-unknown.html). Conf: HIGH.
+- **Beyond baseline (AVX2):** two stable options —
+  1. **Compile the whole binary for AVX2** via `RUSTFLAGS="-C target-feature=+avx2,+fma"`
+     (or `target-cpu=native` locally). Simple, but the binary then *requires* AVX2 → not
+     distributable to old CPUs. Source: alexheretic "Getting rustc to use AVX2"
+     (https://alexheretic.github.io/posts/auto-avx2/). Confidence: HIGH.
+  2. **Runtime dispatch**: `is_x86_feature_detected!("avx2")` + `#[target_feature(enable=
+     "avx2")]` (unsafe fn), or the **`multiversion`** crate (safe macro that clones the fn
+     per feature set and dispatches at runtime), or **`pulp`** (generic-over-ISA kernel,
+     built-in multiversioning, powers `faer`; limited to native SIMD width and NEON/AVX2/
+     AVX512). Sources: docs.rs/pulp, docs.rs/multiversion, Shnatsel "State of SIMD in Rust
+     2025" (https://shnatsel.medium.com/the-state-of-simd-in-rust-in-2025-32c263e5f53d).
+     Confidence: MEDIUM-HIGH.
+- **For this project:** `wide` over a fixed `f32x8` already covers SSE2 (split into 2x
+  SSE), AVX2 (1 register) and NEON/wasm transparently at compile time. If a runtime AVX2
+  uplift is wanted on a stock SSE2 binary, wrap the `wide` kernel in `multiversion`.
+  Recommendation: ship `wide`-baseline first; add `multiversion` only if profiling shows the
+  AVX2 path is worth a second codegen.
+
+## Q7. wasm-simd128 for tte-wasm
+
+- `wide` lowers its types to wasm `v128` SIMD **automatically** when built with
+  `-C target-feature=+simd128` (it special-cases wasm32 internally; otherwise falls back to
+  scalar `[f32; N]`). No code change needed in the kernel. Source: wide README. Conf: HIGH.
+- Browser support for wasm SIMD is universal in modern browsers (Chrome 91+, Firefox 89+,
+  Safari 16.4+, Edge 91+). Source: testmuai wasm-simd hub. Confidence: HIGH.
+- **Determinism caveat for wasm:** the *standard* wasm SIMD `f32x4.mul`/`add` are
+  IEEE-deterministic; only the **relaxed-simd** `fma`/`madd` ops are nondeterministic across
+  engines. As long as the kernel avoids `mul_add`/relaxed-fma, wasm output matches native
+  (modulo the FMA rule in Q4). Source: WebAssembly/relaxed-simd Overview
+  (https://github.com/WebAssembly/relaxed-simd/blob/main/proposals/relaxed-simd/Overview.md).
+  Confidence: HIGH.
+
+(Q4 expansion on reductions/denormals/x87, Q6 speedup numbers, and the
+Recommendation + NFR sections still pending.)
