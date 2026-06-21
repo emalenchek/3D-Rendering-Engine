@@ -15,14 +15,24 @@
 const ATLAS_GLYPHS =
   " .,-~:;=!*#$@█▀"; // ASCII ramp + full block + upper-half block
 
+// iOS Safari refuses to render a canvas whose backing store exceeds this area
+// (4096² px, pre-iOS-18; raised to 8192² in iOS 18). Stay under it (FR-10.2).
+const MAX_CANVAS_AREA = 16_777_216;
+
 export class GridRenderer {
-  // `cellW`/`cellH` are device pixels per character cell.
-  constructor(canvas, { cellW = 9, cellH = 18, font = "16px monospace" } = {}) {
+  // `cellW`/`cellH` are device pixels per character cell. `maxDpr` caps the
+  // backing-store scale (FR-10.2): retina phones report devicePixelRatio 2–3,
+  // which squares the fill cost for no visible gain at these cell sizes.
+  constructor(
+    canvas,
+    { cellW = 9, cellH = 18, font = "16px monospace", maxDpr = 2 } = {},
+  ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d", { alpha: false });
     this.cellW = cellW;
     this.cellH = cellH;
     this.font = font;
+    this.maxDpr = maxDpr;
     this.cols = 0;
     this.rows = 0;
     this._buildAtlas();
@@ -30,7 +40,7 @@ export class GridRenderer {
 
   // Render one white-on-transparent copy of each glyph into an offscreen atlas.
   _buildAtlas() {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, this.maxDpr);
     this.dpr = dpr;
     const w = Math.ceil(this.cellW * dpr);
     const h = Math.ceil(this.cellH * dpr);
@@ -72,6 +82,12 @@ export class GridRenderer {
     this.canvas.height = rows * this.glyphPxH;
     this.canvas.style.width = `${cols * this.cellW}px`;
     this.canvas.style.height = `${rows * this.cellH}px`;
+    if (this.canvas.width * this.canvas.height > MAX_CANVAS_AREA) {
+      console.warn(
+        `tte: canvas backing ${this.canvas.width}×${this.canvas.height} exceeds the ` +
+          `iOS Safari area cap (${MAX_CANVAS_AREA}px) — lower maxDpr or the grid size.`,
+      );
+    }
 
     // Offscreen layers for the batched composite (FR-10.1): an `ink` layer
     // (transparent, holds the white glyph shapes) and a `color` layer (opaque,

@@ -156,6 +156,8 @@ jobs:
         run: node scripts/pixel-parity.mjs
       - name: WebGL presenter parity (FR-11.2 / NFR-23)
         run: node scripts/webgl-parity.mjs
+      - name: DPR cap on a retina viewport (FR-10.2)
+        run: node scripts/dpr-cap.mjs
 
   deny:
     name: Dependency vetting
