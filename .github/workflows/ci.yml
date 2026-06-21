@@ -146,13 +146,16 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Serve web/ and smoke-test the demo boots (SIMD + scalar fallback)
+      - name: Serve web/ and smoke-test the demo boots (presenters × wasm variants)
         run: |
           (cd web && python3 -m http.server 8000 >/dev/null 2>&1 &)
-          node scripts/smoke.mjs                                   # SIMD module
+          node scripts/smoke.mjs                                   # WebGL2 + SIMD
           SMOKE_URL='http://localhost:8000/?nosimd' node scripts/smoke.mjs  # FR-9.3 scalar fallback
+          SMOKE_URL='http://localhost:8000/?nogl' node scripts/smoke.mjs    # NFR-23 Canvas2D fallback
       - name: Presenter pixel-parity (FR-10.1 / NFR-22)
         run: node scripts/pixel-parity.mjs
+      - name: WebGL presenter parity (FR-11.2 / NFR-23)
+        run: node scripts/webgl-parity.mjs
 
   deny:
     name: Dependency vetting
