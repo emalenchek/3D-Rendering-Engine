@@ -429,37 +429,112 @@ mod tests {
             // Per-vertex stage: scalar reference vs the SIMD transform kernel —
             // these must already be bit-identical (FR-7.2).
             let view_proj = camera.projection_matrix(w, h) * camera.view_matrix();
-            let world_pos: Vec<Vec3> = mesh.positions.iter().map(|&p| transform_point(model, p)).collect();
-            let world_nrm: Vec<Vec3> = mesh.normals.iter().map(|&n| transform_dir(model, n)).collect();
-            let clip: Vec<Vec4> = world_pos.iter().map(|&p| view_proj * p.extend(1.0)).collect();
+            let world_pos: Vec<Vec3> = mesh
+                .positions
+                .iter()
+                .map(|&p| transform_point(model, p))
+                .collect();
+            let world_nrm: Vec<Vec3> = mesh
+                .normals
+                .iter()
+                .map(|&n| transform_dir(model, n))
+                .collect();
+            let clip: Vec<Vec4> = world_pos
+                .iter()
+                .map(|&p| view_proj * p.extend(1.0))
+                .collect();
 
-            let (sp, sn, sc) =
-                crate::geom_simd::transform_vertices(model, view_proj, &mesh.positions, &mesh.normals);
-            assert_eq!((sp.len(), sn.len(), sc.len()), (world_pos.len(), world_nrm.len(), clip.len()));
+            let (sp, sn, sc) = crate::geom_simd::transform_vertices(
+                model,
+                view_proj,
+                &mesh.positions,
+                &mesh.normals,
+            );
+            assert_eq!(
+                (sp.len(), sn.len(), sc.len()),
+                (world_pos.len(), world_nrm.len(), clip.len())
+            );
             for i in 0..world_pos.len() {
-                for (a, b) in [(world_pos[i].x, sp[i].x), (world_pos[i].y, sp[i].y), (world_pos[i].z, sp[i].z)] {
-                    assert_eq!(bits(a), bits(b), "{mode:?}: world_pos[{i}] transform mismatch");
+                for (a, b) in [
+                    (world_pos[i].x, sp[i].x),
+                    (world_pos[i].y, sp[i].y),
+                    (world_pos[i].z, sp[i].z),
+                ] {
+                    assert_eq!(
+                        bits(a),
+                        bits(b),
+                        "{mode:?}: world_pos[{i}] transform mismatch"
+                    );
                 }
-                for (a, b) in [(world_nrm[i].x, sn[i].x), (world_nrm[i].y, sn[i].y), (world_nrm[i].z, sn[i].z)] {
-                    assert_eq!(bits(a), bits(b), "{mode:?}: world_nrm[{i}] transform mismatch");
+                for (a, b) in [
+                    (world_nrm[i].x, sn[i].x),
+                    (world_nrm[i].y, sn[i].y),
+                    (world_nrm[i].z, sn[i].z),
+                ] {
+                    assert_eq!(
+                        bits(a),
+                        bits(b),
+                        "{mode:?}: world_nrm[{i}] transform mismatch"
+                    );
                 }
-                for (a, b) in [(clip[i].x, sc[i].x), (clip[i].y, sc[i].y), (clip[i].z, sc[i].z), (clip[i].w, sc[i].w)] {
+                for (a, b) in [
+                    (clip[i].x, sc[i].x),
+                    (clip[i].y, sc[i].y),
+                    (clip[i].z, sc[i].z),
+                    (clip[i].w, sc[i].w),
+                ] {
                     assert_eq!(bits(a), bits(b), "{mode:?}: clip[{i}] transform mismatch");
                 }
             }
 
-            let s = build_draw_tris_scalar(&mesh.triangles, &clip, &world_pos, &world_nrm, &light, mode, material, w, h);
-            let v = crate::geom_simd::build_draw_tris(&mesh.triangles, &clip, &world_pos, &world_nrm, &light, mode, material, w, h);
+            let s = build_draw_tris_scalar(
+                &mesh.triangles,
+                &clip,
+                &world_pos,
+                &world_nrm,
+                &light,
+                mode,
+                material,
+                w,
+                h,
+            );
+            let v = crate::geom_simd::build_draw_tris(
+                &mesh.triangles,
+                &clip,
+                &world_pos,
+                &world_nrm,
+                &light,
+                mode,
+                material,
+                w,
+                h,
+            );
 
-            assert_eq!(s.len(), v.len(), "{mode:?}: triangle count diverged (cull mismatch)");
+            assert_eq!(
+                s.len(),
+                v.len(),
+                "{mode:?}: triangle count diverged (cull mismatch)"
+            );
             for (i, (a, b)) in s.iter().zip(&v).enumerate() {
                 for k in 0..3 {
                     assert_eq!(bits(a.v[k].x), bits(b.v[k].x), "{mode:?} tri {i} v{k}.x");
                     assert_eq!(bits(a.v[k].y), bits(b.v[k].y), "{mode:?} tri {i} v{k}.y");
-                    assert_eq!(bits(a.v[k].depth), bits(b.v[k].depth), "{mode:?} tri {i} v{k}.depth");
-                    assert_eq!(bits(a.v[k].intensity), bits(b.v[k].intensity), "{mode:?} tri {i} v{k}.intensity");
+                    assert_eq!(
+                        bits(a.v[k].depth),
+                        bits(b.v[k].depth),
+                        "{mode:?} tri {i} v{k}.depth"
+                    );
+                    assert_eq!(
+                        bits(a.v[k].intensity),
+                        bits(b.v[k].intensity),
+                        "{mode:?} tri {i} v{k}.intensity"
+                    );
                 }
-                assert_eq!((a.y_min, a.y_max), (b.y_min, b.y_max), "{mode:?} tri {i} row span");
+                assert_eq!(
+                    (a.y_min, a.y_max),
+                    (b.y_min, b.y_max),
+                    "{mode:?} tri {i} row span"
+                );
             }
 
             // And the rendered frames must match pixel-for-pixel.
@@ -479,7 +554,13 @@ mod tests {
         for mode in [ShadingMode::Flat, ShadingMode::Gouraud] {
             assert_parity(&sphere, rot, mode, 200, 120);
             // Scaled so the sphere straddles the near plane → exercises culling.
-            assert_parity(&sphere, Mat4::scale(Vec3::new(6.0, 6.0, 6.0)) * rot, mode, 200, 120);
+            assert_parity(
+                &sphere,
+                Mat4::scale(Vec3::new(6.0, 6.0, 6.0)) * rot,
+                mode,
+                200,
+                120,
+            );
         }
     }
 
@@ -617,9 +698,19 @@ mod tests {
         let n_verts = sphere.positions.len();
         println!("\n--- FR-7.1 stage split: solid_100k_tri @ {w}x{h} ---");
         println!("triangles: {n_tris} ({n_drawn} drawn after cull); vertices: {n_verts}");
-        println!("geometry  (prepare_mesh): {geo_us:8.1} us/frame  ({:5.1}%)", 100.0 * geo_us / total);
-        println!("  └ vertex transforms:    {xf_us:8.1} us/frame  ({:5.1}% of frame, {:5.1}% of geometry)", 100.0 * xf_us / total, 100.0 * xf_us / geo_us);
-        println!("raster    (rasterize):    {ras_us:8.1} us/frame  ({:5.1}%)", 100.0 * ras_us / total);
+        println!(
+            "geometry  (prepare_mesh): {geo_us:8.1} us/frame  ({:5.1}%)",
+            100.0 * geo_us / total
+        );
+        println!(
+            "  └ vertex transforms:    {xf_us:8.1} us/frame  ({:5.1}% of frame, {:5.1}% of geometry)",
+            100.0 * xf_us / total,
+            100.0 * xf_us / geo_us
+        );
+        println!(
+            "raster    (rasterize):    {ras_us:8.1} us/frame  ({:5.1}%)",
+            100.0 * ras_us / total
+        );
         println!("total:                    {total:8.1} us/frame");
     }
 

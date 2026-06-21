@@ -35,7 +35,11 @@ pub(crate) fn transform_vertices(
     normals: &[Vec3],
 ) -> (Vec<Vec3>, Vec<Vec3>, Vec<Vec4>) {
     let n = positions.len();
-    debug_assert_eq!(n, normals.len(), "positions and normals are parallel arrays");
+    debug_assert_eq!(
+        n,
+        normals.len(),
+        "positions and normals are parallel arrays"
+    );
     let mut world_pos = Vec::with_capacity(n);
     let mut world_nrm = Vec::with_capacity(n);
     let mut clip = Vec::with_capacity(n);
@@ -50,12 +54,22 @@ pub(crate) fn transform_vertices(
     while base < n {
         let len = (n - base).min(LANES);
         // Gather 8 vertices (tail padded with the last) into SoA lanes.
-        let mut px = [0.0f32; LANES]; let mut py = [0.0f32; LANES]; let mut pz = [0.0f32; LANES];
-        let mut nx = [0.0f32; LANES]; let mut ny = [0.0f32; LANES]; let mut nz = [0.0f32; LANES];
+        let mut px = [0.0f32; LANES];
+        let mut py = [0.0f32; LANES];
+        let mut pz = [0.0f32; LANES];
+        let mut nx = [0.0f32; LANES];
+        let mut ny = [0.0f32; LANES];
+        let mut nz = [0.0f32; LANES];
         for l in 0..LANES {
             let j = (base + l).min(n - 1);
-            let p = positions[j]; px[l] = p.x; py[l] = p.y; pz[l] = p.z;
-            let q = normals[j]; nx[l] = q.x; ny[l] = q.y; nz[l] = q.z;
+            let p = positions[j];
+            px[l] = p.x;
+            py[l] = p.y;
+            pz[l] = p.z;
+            let q = normals[j];
+            nx[l] = q.x;
+            ny[l] = q.y;
+            nz[l] = q.z;
         }
         let (px, py, pz) = (f32x8::from(px), f32x8::from(py), f32x8::from(pz));
         let (nx, ny, nz) = (f32x8::from(nx), f32x8::from(ny), f32x8::from(nz));
@@ -167,28 +181,76 @@ pub(crate) fn build_draw_tris(
         // shading source (positions or normals). A short tail repeats the last
         // real triangle; padded lanes are never emitted (the `0..len` loop skips
         // them), so their values are inert.
-        let mut cax = [0.0f32; LANES]; let mut cay = [0.0f32; LANES];
-        let mut caz = [0.0f32; LANES]; let mut caw = [0.0f32; LANES];
-        let mut cbx = [0.0f32; LANES]; let mut cby = [0.0f32; LANES];
-        let mut cbz = [0.0f32; LANES]; let mut cbw = [0.0f32; LANES];
-        let mut ccx = [0.0f32; LANES]; let mut ccy = [0.0f32; LANES];
-        let mut ccz = [0.0f32; LANES]; let mut ccw = [0.0f32; LANES];
-        let mut pax = [0.0f32; LANES]; let mut pay = [0.0f32; LANES]; let mut paz = [0.0f32; LANES];
-        let mut pbx = [0.0f32; LANES]; let mut pby = [0.0f32; LANES]; let mut pbz = [0.0f32; LANES];
-        let mut pcx = [0.0f32; LANES]; let mut pcy = [0.0f32; LANES]; let mut pcz = [0.0f32; LANES];
+        let mut cax = [0.0f32; LANES];
+        let mut cay = [0.0f32; LANES];
+        let mut caz = [0.0f32; LANES];
+        let mut caw = [0.0f32; LANES];
+        let mut cbx = [0.0f32; LANES];
+        let mut cby = [0.0f32; LANES];
+        let mut cbz = [0.0f32; LANES];
+        let mut cbw = [0.0f32; LANES];
+        let mut ccx = [0.0f32; LANES];
+        let mut ccy = [0.0f32; LANES];
+        let mut ccz = [0.0f32; LANES];
+        let mut ccw = [0.0f32; LANES];
+        let mut pax = [0.0f32; LANES];
+        let mut pay = [0.0f32; LANES];
+        let mut paz = [0.0f32; LANES];
+        let mut pbx = [0.0f32; LANES];
+        let mut pby = [0.0f32; LANES];
+        let mut pbz = [0.0f32; LANES];
+        let mut pcx = [0.0f32; LANES];
+        let mut pcy = [0.0f32; LANES];
+        let mut pcz = [0.0f32; LANES];
         for l in 0..LANES {
             let [ia, ib, ic] = chunk[l.min(len - 1)];
             let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
-            let a = clip[ia]; cax[l] = a.x; cay[l] = a.y; caz[l] = a.z; caw[l] = a.w;
-            let b = clip[ib]; cbx[l] = b.x; cby[l] = b.y; cbz[l] = b.z; cbw[l] = b.w;
-            let c = clip[ic]; ccx[l] = c.x; ccy[l] = c.y; ccz[l] = c.z; ccw[l] = c.w;
-            let a = shade_src[ia]; pax[l] = a.x; pay[l] = a.y; paz[l] = a.z;
-            let b = shade_src[ib]; pbx[l] = b.x; pby[l] = b.y; pbz[l] = b.z;
-            let c = shade_src[ic]; pcx[l] = c.x; pcy[l] = c.y; pcz[l] = c.z;
+            let a = clip[ia];
+            cax[l] = a.x;
+            cay[l] = a.y;
+            caz[l] = a.z;
+            caw[l] = a.w;
+            let b = clip[ib];
+            cbx[l] = b.x;
+            cby[l] = b.y;
+            cbz[l] = b.z;
+            cbw[l] = b.w;
+            let c = clip[ic];
+            ccx[l] = c.x;
+            ccy[l] = c.y;
+            ccz[l] = c.z;
+            ccw[l] = c.w;
+            let a = shade_src[ia];
+            pax[l] = a.x;
+            pay[l] = a.y;
+            paz[l] = a.z;
+            let b = shade_src[ib];
+            pbx[l] = b.x;
+            pby[l] = b.y;
+            pbz[l] = b.z;
+            let c = shade_src[ic];
+            pcx[l] = c.x;
+            pcy[l] = c.y;
+            pcz[l] = c.z;
         }
-        let (cax, cay, caz, caw) = (f32x8::from(cax), f32x8::from(cay), f32x8::from(caz), f32x8::from(caw));
-        let (cbx, cby, cbz, cbw) = (f32x8::from(cbx), f32x8::from(cby), f32x8::from(cbz), f32x8::from(cbw));
-        let (ccx, ccy, ccz, ccw) = (f32x8::from(ccx), f32x8::from(ccy), f32x8::from(ccz), f32x8::from(ccw));
+        let (cax, cay, caz, caw) = (
+            f32x8::from(cax),
+            f32x8::from(cay),
+            f32x8::from(caz),
+            f32x8::from(caw),
+        );
+        let (cbx, cby, cbz, cbw) = (
+            f32x8::from(cbx),
+            f32x8::from(cby),
+            f32x8::from(cbz),
+            f32x8::from(cbw),
+        );
+        let (ccx, ccy, ccz, ccw) = (
+            f32x8::from(ccx),
+            f32x8::from(ccy),
+            f32x8::from(ccz),
+            f32x8::from(ccw),
+        );
         let (pax, pay, paz) = (f32x8::from(pax), f32x8::from(pay), f32x8::from(paz));
         let (pbx, pby, pbz) = (f32x8::from(pbx), f32x8::from(pby), f32x8::from(pbz));
         let (pcx, pcy, pcz) = (f32x8::from(pcx), f32x8::from(pcy), f32x8::from(pcz));
@@ -238,9 +300,24 @@ pub(crate) fn build_draw_tris(
         let y_min = sya.floor().min(syb.floor()).min(syc.floor()).to_array();
         let y_max = sya.ceil().max(syb.ceil()).max(syc.ceil()).to_array();
 
-        let (sxa, sya, dpa, ia) = (sxa.to_array(), sya.to_array(), dpa.to_array(), ia.to_array());
-        let (sxb, syb, dpb, ib) = (sxb.to_array(), syb.to_array(), dpb.to_array(), ib.to_array());
-        let (sxc, syc, dpc, ic) = (sxc.to_array(), syc.to_array(), dpc.to_array(), ic.to_array());
+        let (sxa, sya, dpa, ia) = (
+            sxa.to_array(),
+            sya.to_array(),
+            dpa.to_array(),
+            ia.to_array(),
+        );
+        let (sxb, syb, dpb, ib) = (
+            sxb.to_array(),
+            syb.to_array(),
+            dpb.to_array(),
+            ib.to_array(),
+        );
+        let (sxc, syc, dpc, ic) = (
+            sxc.to_array(),
+            syc.to_array(),
+            dpc.to_array(),
+            ic.to_array(),
+        );
 
         for l in 0..len {
             if cull_mask & (1 << l) != 0 {
@@ -248,9 +325,24 @@ pub(crate) fn build_draw_tris(
             }
             out.push(DrawTri {
                 v: [
-                    Vertex { x: sxa[l], y: sya[l], depth: dpa[l], intensity: ia[l] },
-                    Vertex { x: sxb[l], y: syb[l], depth: dpb[l], intensity: ib[l] },
-                    Vertex { x: sxc[l], y: syc[l], depth: dpc[l], intensity: ic[l] },
+                    Vertex {
+                        x: sxa[l],
+                        y: sya[l],
+                        depth: dpa[l],
+                        intensity: ia[l],
+                    },
+                    Vertex {
+                        x: sxb[l],
+                        y: syb[l],
+                        depth: dpb[l],
+                        intensity: ib[l],
+                    },
+                    Vertex {
+                        x: sxc[l],
+                        y: syc[l],
+                        depth: dpc[l],
+                        intensity: ic[l],
+                    },
                 ],
                 color,
                 y_min: y_min[l] as i32,
