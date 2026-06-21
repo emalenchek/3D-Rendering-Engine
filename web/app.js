@@ -58,9 +58,15 @@ async function main() {
 
   const status = document.getElementById("status");
   let frames = 0, lastFpsAt = performance.now(), fps = 0;
+  // M2 device-profile instrumentation: average the wasm render() vs the canvas
+  // present (draw()) cost and surface the split in the status line, so the
+  // render-vs-present ratio can be read directly on a phone (no Web Inspector).
+  let renderMs = 0, presentMs = 0;
 
   function frame() {
+    const t0 = performance.now();
     renderer.render();
+    const t1 = performance.now();
     grid.draw(
       renderer.width(),
       renderer.height(),
@@ -68,13 +74,20 @@ async function main() {
       renderer.fg(),
       renderer.bg(),
     );
+    const t2 = performance.now();
+    renderMs += t1 - t0;
+    presentMs += t2 - t1;
     frames++;
-    const now = performance.now();
-    if (now - lastFpsAt >= 500) {
-      fps = Math.round((frames * 1000) / (now - lastFpsAt));
+    if (t2 - lastFpsAt >= 500) {
+      fps = Math.round((frames * 1000) / (t2 - lastFpsAt));
+      const r = (renderMs / frames).toFixed(1);
+      const p = (presentMs / frames).toFixed(1);
+      status.textContent =
+        `${renderer.width()}×${renderer.height()} · ${fps} FPS · render ${r}ms · present ${p}ms`;
       frames = 0;
-      lastFpsAt = now;
-      status.textContent = `${renderer.width()}×${renderer.height()} · ${fps} FPS`;
+      renderMs = 0;
+      presentMs = 0;
+      lastFpsAt = t2;
     }
     requestAnimationFrame(frame);
   }
