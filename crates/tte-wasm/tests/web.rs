@@ -25,6 +25,20 @@ fn renderer_constructs_and_renders_default_cube() {
 }
 
 #[wasm_bindgen_test]
+fn renderer_resizes_grid_and_keeps_subject() {
+    // FR-10.3: resize re-renders the same subject at the new cell dimensions.
+    let mut r = Renderer::new(40, 20);
+    r.resize(24, 12);
+    assert_eq!(r.width(), 24);
+    assert_eq!(r.height(), 12);
+    assert_eq!(r.glyphs().len(), 24 * 12);
+    assert!(
+        r.glyphs().iter().any(|&g| g != u16::from(b' ')),
+        "default cube should still be visible after resize"
+    );
+}
+
+#[wasm_bindgen_test]
 fn renderer_loads_scene_and_orbits() {
     let mut r = Renderer::new(60, 30);
     r.load_scene("sphere\nplane translate=(0 -1 0) scale=4")

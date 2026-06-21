@@ -5,6 +5,7 @@
 import init, { Renderer } from "./pkg/tte_wasm.js";
 import { GridRenderer } from "./renderer.js";
 import { WebGLGridRenderer } from "./webgl-renderer.js";
+import { nextScale } from "./adaptive.js";
 
 // Pick the presenter: the WebGL2 GPU presenter (FR-11.1) when available, else the
 // Canvas2D one (NFR-23). `?nogl` forces Canvas2D so CI can exercise the fallback.
@@ -77,7 +78,29 @@ async function main() {
   // render-vs-present ratio can be read directly on a phone (no Web Inspector).
   let renderMs = 0, presentMs = 0;
 
-  function frame() {
+  // FR-10.3 thermal/responsiveness knobs:
+  // - cap the loop to ~30 fps on touch devices (halves sustained CPU vs chasing
+  //   60), uncapped on desktop;
+  // - pause entirely while the tab is hidden;
+  // - adapt the cell grid to the measured FPS (fewer cells when slow), keeping
+  //   the aspect ratio so the display size is unchanged on mobile (max-width).
+  const minFrameMs = matchMedia("(pointer: coarse)").matches ? 1000 / 30 : 0;
+  let lastFrameAt = 0;
+  let hidden = document.hidden;
+  document.addEventListener("visibilitychange", () => {
+    hidden = document.hidden;
+    if (!hidden) {
+      lastFpsAt = performance.now();
+      frames = renderMs = presentMs = 0;
+    }
+  });
+  let gridScale = 1;
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (hidden || now - lastFrameAt < minFrameMs) return;
+    lastFrameAt = now;
+
     const t0 = performance.now();
     renderer.render();
     const t1 = performance.now();
@@ -102,8 +125,17 @@ async function main() {
       renderMs = 0;
       presentMs = 0;
       lastFpsAt = t2;
+
+      // Adapt the grid resolution to the load (uniform scale → aspect preserved).
+      const ns = nextScale(gridScale, fps);
+      if (ns !== gridScale) {
+        gridScale = ns;
+        renderer.resize(
+          Math.max(2, Math.round(COLS * ns)),
+          Math.max(2, Math.round(ROWS * ns)),
+        );
+      }
     }
-    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
 
