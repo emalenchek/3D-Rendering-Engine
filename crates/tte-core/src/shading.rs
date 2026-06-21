@@ -22,9 +22,16 @@ impl DirectionalLight {
     /// Lambertian intensity for a surface with unit `normal`, in `0.0..=1.0`.
     /// `intensity = ambient + (1 - ambient) * max(0, N · L_toward_light)`.
     pub fn intensity(&self, normal: Vec3) -> f32 {
-        let to_light = -self.direction;
-        let diffuse = normal.dot(to_light).max(0.0);
+        let diffuse = normal.dot(self.to_light()).max(0.0);
         (self.ambient + (1.0 - self.ambient) * diffuse).clamp(0.0, 1.0)
+    }
+
+    /// Unit vector pointing *toward* the light (the negated travel direction).
+    /// Exposed for the SIMD geometry kernel, which broadcasts it across lanes
+    /// and must reproduce [`intensity`](Self::intensity)'s math bit-for-bit.
+    /// By value (the type is `Copy`) per `clippy::wrong_self_convention`.
+    pub(crate) fn to_light(self) -> Vec3 {
+        -self.direction
     }
 }
 

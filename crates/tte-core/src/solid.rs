@@ -7,7 +7,12 @@
 use crate::camera::Camera;
 use crate::color::{Material, Rgb};
 use crate::framebuffer::Framebuffer;
-use crate::math::{Mat4, Vec3, Vec4};
+use crate::math::Mat4;
+// `Vec3`/`Vec4` are named only by the scalar per-vertex transforms and the
+// scalar per-triangle builder + helpers, all compiled out of a non-test `simd`
+// build (the SIMD kernels in `geom_simd` replace them).
+#[cfg(any(not(feature = "simd"), test))]
+use crate::math::{Vec3, Vec4};
 use crate::mesh::Mesh;
 use crate::primitives;
 use crate::scene::{Geometry, Scene};
@@ -21,11 +26,11 @@ use rayon::prelude::*;
 /// color, and its pixel-row span (precomputed so a parallel band can skip
 /// triangles it doesn't overlap — FR-6.1).
 #[derive(Debug, Clone, Copy)]
-struct DrawTri {
-    v: [Vertex; 3],
-    color: Rgb,
-    y_min: i32,
-    y_max: i32,
+pub(crate) struct DrawTri {
+    pub(crate) v: [Vertex; 3],
+    pub(crate) color: Rgb,
+    pub(crate) y_min: i32,
+    pub(crate) y_max: i32,
 }
 
 /// Below this triangle count the parallel path's overhead isn't worth it
@@ -109,18 +114,68 @@ fn prepare_mesh(
 ) -> Vec<DrawTri> {
     let view_proj = camera.projection_matrix(width, height) * camera.view_matrix();
 
-    // World-space positions and normals. The model's linear part transforms
-    // normals correctly for rotation/uniform scale; non-uniform scale would
-    // need the inverse-transpose — deferred with the material system.
-    let world_pos = map_collect(&mesh.positions, |&p| transform_point(model, p));
-    let world_nrm = map_collect(&mesh.normals, |&n| transform_dir(model, n));
-    let clip = map_collect(&world_pos, |&p| view_proj * p.extend(1.0));
+    // The geometry stage in two halves — per-vertex transforms then the
+    // per-triangle build. With the `simd` feature both run as `f32x8` kernels
+    // (FR-7.2; the profile-confirmed hot stage, docs/research/11b-profile-results.md)
+    // and are byte-identical to the scalar path (FR-7.4). The rasterizer is
+    // untouched either way. The model's linear part transforms normals correctly
+    // for rotation/uniform scale; non-uniform scale would need the inverse-
+    // transpose — deferred with the material system.
+    #[cfg(feature = "simd")]
+    {
+        let (world_pos, world_nrm, clip) =
+            crate::geom_simd::transform_vertices(model, view_proj, &mesh.positions, &mesh.normals);
+        crate::geom_simd::build_draw_tris(
+            &mesh.triangles,
+            &clip,
+            &world_pos,
+            &world_nrm,
+            light,
+            shading,
+            material,
+            width,
+            height,
+        )
+    }
+    #[cfg(not(feature = "simd"))]
+    {
+        let world_pos = map_collect(&mesh.positions, |&p| transform_point(model, p));
+        let world_nrm = map_collect(&mesh.normals, |&n| transform_dir(model, n));
+        let clip = map_collect(&world_pos, |&p| view_proj * p.extend(1.0));
+        build_draw_tris_scalar(
+            &mesh.triangles,
+            &clip,
+            &world_pos,
+            &world_nrm,
+            light,
+            shading,
+            material,
+            width,
+            height,
+        )
+    }
+}
 
-    // Project + shade + near-cull each triangle. `filter_map_collect` keeps mesh
-    // order (so the rasterizer's z tie-break stays deterministic) while running
-    // in parallel when the `parallel` feature is on (parallelizing the geometry
-    // stage matters: at high triangle counts it dominates the frame — Amdahl).
-    filter_map_collect(&mesh.triangles, |&[ia, ib, ic]| {
+/// Scalar per-triangle geometry: project + shade + near-cull each triangle into
+/// a screen-space list, preserving mesh order (so the rasterizer's z tie-break
+/// stays deterministic) and running in parallel under the `parallel` feature.
+/// The SIMD kernel ([`crate::geom_simd::build_draw_tris`]) must reproduce this
+/// bit-for-bit; the FR-7.4 parity test drives both from the same input, so this
+/// stays compiled in `test` builds even when `simd` is on.
+#[cfg(any(not(feature = "simd"), test))]
+#[allow(clippy::too_many_arguments)]
+fn build_draw_tris_scalar(
+    triangles: &[[u32; 3]],
+    clip: &[Vec4],
+    world_pos: &[Vec3],
+    world_nrm: &[Vec3],
+    light: &DirectionalLight,
+    shading: ShadingMode,
+    material: Material,
+    width: u16,
+    height: u16,
+) -> Vec<DrawTri> {
+    filter_map_collect(triangles, |&[ia, ib, ic]| {
         let (ia, ib, ic) = (ia as usize, ib as usize, ic as usize);
         let (ca, cb, cc) = (clip[ia], clip[ib], clip[ic]);
 
@@ -152,25 +207,28 @@ fn prepare_mesh(
     })
 }
 
-/// Order-preserving `map` → `Vec`, parallel under the `parallel` feature.
-#[cfg(feature = "parallel")]
+/// Order-preserving `map` → `Vec`, parallel under the `parallel` feature. The
+/// `simd` build transforms vertices via `geom_simd::transform_vertices` instead,
+/// so this is needed only by the scalar path and the profiling/parity tests.
+#[cfg(all(feature = "parallel", any(not(feature = "simd"), test)))]
 fn map_collect<T: Sync, U: Send>(items: &[T], f: impl Fn(&T) -> U + Sync + Send) -> Vec<U> {
     items.par_iter().map(f).collect()
 }
-#[cfg(not(feature = "parallel"))]
+#[cfg(all(not(feature = "parallel"), any(not(feature = "simd"), test)))]
 fn map_collect<T, U>(items: &[T], f: impl Fn(&T) -> U) -> Vec<U> {
     items.iter().map(f).collect()
 }
 
 /// Order-preserving `filter_map` → `Vec`, parallel under the `parallel` feature.
-#[cfg(feature = "parallel")]
+/// Used only by [`build_draw_tris_scalar`], so it follows the same cfg.
+#[cfg(all(feature = "parallel", any(not(feature = "simd"), test)))]
 fn filter_map_collect<T: Sync, U: Send>(
     items: &[T],
     f: impl Fn(&T) -> Option<U> + Sync + Send,
 ) -> Vec<U> {
     items.par_iter().filter_map(f).collect()
 }
-#[cfg(not(feature = "parallel"))]
+#[cfg(all(not(feature = "parallel"), any(not(feature = "simd"), test)))]
 fn filter_map_collect<T, U>(items: &[T], f: impl Fn(&T) -> Option<U>) -> Vec<U> {
     items.iter().filter_map(f).collect()
 }
@@ -266,12 +324,14 @@ where
     fb
 }
 
+#[cfg(any(not(feature = "simd"), test))]
 fn behind_near(clip: Vec4) -> bool {
     clip.w <= 0.0 || clip.z < -clip.w
 }
 
 /// Perspective divide + viewport transform → a screen-space [`Vertex`].
 /// Depth carried is NDC z (smaller = nearer), matching the z-buffer convention.
+#[cfg(any(not(feature = "simd"), test))]
 fn screen_vertex(clip: Vec4, intensity: f32, width: u16, height: u16) -> Vertex {
     let inv_w = 1.0 / clip.w;
     let ndc_x = clip.x * inv_w;
@@ -284,14 +344,17 @@ fn screen_vertex(clip: Vec4, intensity: f32, width: u16, height: u16) -> Vertex 
     }
 }
 
+#[cfg(any(not(feature = "simd"), test))]
 fn face_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
     (b - a).cross(c - a).normalize().unwrap_or(Vec3::Z)
 }
 
+#[cfg(any(not(feature = "simd"), test))]
 fn transform_point(m: Mat4, p: Vec3) -> Vec3 {
     (m * p.extend(1.0)).truncate()
 }
 
+#[cfg(any(not(feature = "simd"), test))]
 fn transform_dir(m: Mat4, d: Vec3) -> Vec3 {
     // w = 0 drops the translation column, leaving the linear part.
     (m * d.extend(0.0)).truncate().normalize().unwrap_or(d)
@@ -346,6 +409,159 @@ mod tests {
             nonbackground_count(&par) > 1000,
             "sphere should fill a region"
         );
+    }
+
+    /// FR-7.4: the SIMD geometry kernel must reproduce the scalar builder
+    /// **bit-for-bit**. Drives both from one set of per-vertex transform outputs
+    /// (so only the per-triangle stage differs), then checks (a) the prepared
+    /// triangle lists are bit-identical and (b) rasterizing each yields the same
+    /// framebuffer. Covers both shading modes, a tail not divisible by 8, and a
+    /// heavy near-plane-cull case.
+    #[cfg(feature = "simd")]
+    #[test]
+    fn fr7_4_simd_matches_scalar_byte_for_byte() {
+        let bits = |f: f32| f.to_bits();
+        let assert_parity = |mesh: &Mesh, model: Mat4, mode: ShadingMode, w: u16, h: u16| {
+            let camera = Camera::default();
+            let light = DirectionalLight::default();
+            let material = Material::default();
+
+            // Per-vertex stage: scalar reference vs the SIMD transform kernel —
+            // these must already be bit-identical (FR-7.2).
+            let view_proj = camera.projection_matrix(w, h) * camera.view_matrix();
+            let world_pos: Vec<Vec3> = mesh
+                .positions
+                .iter()
+                .map(|&p| transform_point(model, p))
+                .collect();
+            let world_nrm: Vec<Vec3> = mesh
+                .normals
+                .iter()
+                .map(|&n| transform_dir(model, n))
+                .collect();
+            let clip: Vec<Vec4> = world_pos
+                .iter()
+                .map(|&p| view_proj * p.extend(1.0))
+                .collect();
+
+            let (sp, sn, sc) = crate::geom_simd::transform_vertices(
+                model,
+                view_proj,
+                &mesh.positions,
+                &mesh.normals,
+            );
+            assert_eq!(
+                (sp.len(), sn.len(), sc.len()),
+                (world_pos.len(), world_nrm.len(), clip.len())
+            );
+            for i in 0..world_pos.len() {
+                for (a, b) in [
+                    (world_pos[i].x, sp[i].x),
+                    (world_pos[i].y, sp[i].y),
+                    (world_pos[i].z, sp[i].z),
+                ] {
+                    assert_eq!(
+                        bits(a),
+                        bits(b),
+                        "{mode:?}: world_pos[{i}] transform mismatch"
+                    );
+                }
+                for (a, b) in [
+                    (world_nrm[i].x, sn[i].x),
+                    (world_nrm[i].y, sn[i].y),
+                    (world_nrm[i].z, sn[i].z),
+                ] {
+                    assert_eq!(
+                        bits(a),
+                        bits(b),
+                        "{mode:?}: world_nrm[{i}] transform mismatch"
+                    );
+                }
+                for (a, b) in [
+                    (clip[i].x, sc[i].x),
+                    (clip[i].y, sc[i].y),
+                    (clip[i].z, sc[i].z),
+                    (clip[i].w, sc[i].w),
+                ] {
+                    assert_eq!(bits(a), bits(b), "{mode:?}: clip[{i}] transform mismatch");
+                }
+            }
+
+            let s = build_draw_tris_scalar(
+                &mesh.triangles,
+                &clip,
+                &world_pos,
+                &world_nrm,
+                &light,
+                mode,
+                material,
+                w,
+                h,
+            );
+            let v = crate::geom_simd::build_draw_tris(
+                &mesh.triangles,
+                &clip,
+                &world_pos,
+                &world_nrm,
+                &light,
+                mode,
+                material,
+                w,
+                h,
+            );
+
+            assert_eq!(
+                s.len(),
+                v.len(),
+                "{mode:?}: triangle count diverged (cull mismatch)"
+            );
+            for (i, (a, b)) in s.iter().zip(&v).enumerate() {
+                for k in 0..3 {
+                    assert_eq!(bits(a.v[k].x), bits(b.v[k].x), "{mode:?} tri {i} v{k}.x");
+                    assert_eq!(bits(a.v[k].y), bits(b.v[k].y), "{mode:?} tri {i} v{k}.y");
+                    assert_eq!(
+                        bits(a.v[k].depth),
+                        bits(b.v[k].depth),
+                        "{mode:?} tri {i} v{k}.depth"
+                    );
+                    assert_eq!(
+                        bits(a.v[k].intensity),
+                        bits(b.v[k].intensity),
+                        "{mode:?} tri {i} v{k}.intensity"
+                    );
+                }
+                assert_eq!(
+                    (a.y_min, a.y_max),
+                    (b.y_min, b.y_max),
+                    "{mode:?} tri {i} row span"
+                );
+            }
+
+            // And the rendered frames must match pixel-for-pixel.
+            let mut fb_s = Framebuffer::new(w, h);
+            rasterize_seq(&mut fb_s, &s);
+            let mut fb_v = Framebuffer::new(w, h);
+            rasterize_seq(&mut fb_v, &v);
+            let px_s: Vec<_> = fb_s.rows().flatten().copied().collect();
+            let px_v: Vec<_> = fb_v.rows().flatten().copied().collect();
+            assert_eq!(px_s, px_v, "{mode:?}: rasterized frames diverged");
+            assert!(!v.is_empty(), "{mode:?}: test mesh produced no triangles");
+        };
+
+        // 2·19·33 = 1254 triangles → 156 full f32x8 batches + a 6-lane tail.
+        let sphere = primitives::sphere(19, 33);
+        let rot = Mat4::rotation_y(0.6) * Mat4::rotation_x(0.4);
+        for mode in [ShadingMode::Flat, ShadingMode::Gouraud] {
+            assert_parity(&sphere, rot, mode, 200, 120);
+            // Scaled so the sphere straddles the near plane → exercises culling.
+            assert_parity(
+                &sphere,
+                Mat4::scale(Vec3::new(6.0, 6.0, 6.0)) * rot,
+                mode,
+                200,
+                120,
+            );
+        }
     }
 
     #[test]
@@ -408,6 +624,94 @@ mod tests {
         let a: Vec<_> = go().rows().flatten().copied().collect();
         let b: Vec<_> = go().rows().flatten().copied().collect();
         assert_eq!(a, b);
+    }
+
+    /// FR-7.1 profile gate (run manually, not a CI test):
+    /// `cargo test --release -p tte-core --no-default-features prof_stage_split -- --ignored --nocapture`
+    /// Splits the `solid_100k_tri @ 400×200` frame into the geometry stage
+    /// (`prepare_mesh`: transforms + shade + project) vs rasterization (`rasterize`:
+    /// edge-function fill + z-test) and prints the wall-clock share of each. The
+    /// SIMD effort (FR-7.2+) is only justified if the geometry stage dominates.
+    #[test]
+    #[ignore = "manual profiling harness; see docs/research/11b-profile-results.md"]
+    fn prof_stage_split() {
+        use std::time::Instant;
+
+        // The benches' 100k-tri sphere at 400×200 (see benches/raster.rs).
+        let sphere = crate::primitives::sphere(160, 320);
+        let n_tris = sphere.triangles.len();
+        let (w, h) = (400u16, 200u16);
+        let model = Mat4::rotation_y(0.6) * Mat4::rotation_x(0.4);
+        let camera = Camera::default();
+        let light = DirectionalLight::default();
+
+        let prepare = || {
+            prepare_mesh(
+                &sphere,
+                model,
+                &camera,
+                &light,
+                ShadingMode::default(),
+                Material::default(),
+                w,
+                h,
+            )
+        };
+
+        // Warm caches / branch predictors, and report how many tris survive cull.
+        let warm = prepare();
+        let n_drawn = warm.len();
+
+        let iters = 30;
+        let mut t_geo = std::time::Duration::ZERO;
+        let mut t_ras = std::time::Duration::ZERO;
+        for _ in 0..iters {
+            let t0 = Instant::now();
+            let tris = prepare();
+            t_geo += t0.elapsed();
+
+            let mut fb = Framebuffer::new(w, h);
+            let t1 = Instant::now();
+            rasterize(&mut fb, &tris);
+            t_ras += t1.elapsed();
+            std::hint::black_box(&fb);
+        }
+        // Sub-split the geometry stage: the vectorizable per-vertex transform
+        // passes (world_pos / world_nrm / clip — the `Mat4 × Vec4` work FR-7.2
+        // targets) vs everything else in prepare_mesh (per-triangle cull/shade/
+        // project). Replays the same three passes prepare_mesh runs.
+        let view_proj = camera.projection_matrix(w, h) * camera.view_matrix();
+        let mut t_xf = std::time::Duration::ZERO;
+        for _ in 0..iters {
+            let t0 = Instant::now();
+            let world_pos = map_collect(&sphere.positions, |&p| transform_point(model, p));
+            let world_nrm = map_collect(&sphere.normals, |&n| transform_dir(model, n));
+            let clip = map_collect(&world_pos, |&p| view_proj * p.extend(1.0));
+            t_xf += t0.elapsed();
+            std::hint::black_box((&world_nrm, &clip));
+        }
+
+        let geo_us = t_geo.as_secs_f64() * 1e6 / iters as f64;
+        let ras_us = t_ras.as_secs_f64() * 1e6 / iters as f64;
+        let xf_us = t_xf.as_secs_f64() * 1e6 / iters as f64;
+        let total = geo_us + ras_us;
+        let n_verts = sphere.positions.len();
+        println!("\n--- FR-7.1 stage split: solid_100k_tri @ {w}x{h} ---");
+        println!("triangles: {n_tris} ({n_drawn} drawn after cull); vertices: {n_verts}");
+        println!(
+            "geometry  (prepare_mesh): {geo_us:8.1} us/frame  ({:5.1}%)",
+            100.0 * geo_us / total
+        );
+        println!(
+            "  └ vertex transforms:    {xf_us:8.1} us/frame  ({:5.1}% of frame, {:5.1}% of geometry)",
+            100.0 * xf_us / total,
+            100.0 * xf_us / geo_us
+        );
+        println!(
+            "raster    (rasterize):    {ras_us:8.1} us/frame  ({:5.1}%)",
+            100.0 * ras_us / total
+        );
+        println!("total:                    {total:8.1} us/frame");
     }
 
     #[test]

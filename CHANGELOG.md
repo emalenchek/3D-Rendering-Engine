@@ -1,5 +1,35 @@
 # Changelog
 
+## v2.1.0 — Profile-guided SIMD + live demo (unreleased)
+
+Make the engine *faster* (a profile-guided SIMD geometry stage) and *visible* (a
+live, auto-deployed, CI-tested demo). Scope in `docs/05-v2.1-scope.md`; de-risking
+research in `docs/research/11`–`12`.
+
+### Live demo deployment (Phase 8)
+- `.github/workflows/deploy.yml`: the `web/` WASM demo auto-deploys to GitHub Pages
+  on every merge to `main` via the official `configure/upload/deploy-pages` flow,
+  with license attribution bundled into the published site.
+- CI `demo-smoke` job: a headless-Chromium Playwright test serves the built demo and
+  asserts it boots (WASM init + a live FPS readout, zero console/page errors).
+
+### Profile-guided SIMD (Phase 7)
+- **Profiled first** (FR-7.1, `docs/research/11b`): the geometry stage dominates the
+  100k-tri frame, but the per-vertex `Mat4×Vec4` transform is only ~4% of it — so the
+  kernel was re-scoped to vectorize the *whole* per-triangle stage, not just transforms.
+- **`wide::f32x8` geometry kernel** behind an opt-in `simd` feature: per-vertex
+  transforms (8 vertices/lane) and the per-triangle stage — near-cull, face normal,
+  Lambert shading, perspective divide + viewport, row span (8 triangles/lane). The
+  integer rasterizer is untouched.
+- **Byte-identical** to the scalar path (FR-7.4): no `mul_add`/FMA, scalar op order
+  replayed, so output matches bit-for-bit on SSE2/AVX2 and the wasm-simd128 build. A
+  parity test guards the transform pass, the triangle list, and the rendered frame;
+  CI runs it on both AVX2 and the SSE2 baseline.
+- **~1.5–1.6×** on the geometry stage at 100k tris @ 400×200, single-thread (NFR-13).
+  The **live demo** ships with wasm SIMD too (`+simd128`, W5) — byte-identical frames.
+- Benches: criterion reads the scalar-vs-simd wall-clock; an `iai-callgrind` bench
+  (`iai_geom`) gives deterministic instruction counts as a CI regression gate (FR-7.5).
+
 ## v2.0.0 — Browser frontend + performance push
 
 The engine now runs in the browser *and* renders in parallel on multiple cores —

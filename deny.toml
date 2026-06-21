@@ -5,6 +5,13 @@
 [advisories]
 # RustSec advisory DB; fail on any vulnerability affecting our tree.
 version = 2
+# `unmaintained` advisories (not vulnerabilities) on dev-only transitive deps of
+# `iai-callgrind` (the FR-7.5 instruction-count bench). Never shipped in the
+# binary or wasm; benchmarking tooling only. Revisit when iai-callgrind updates.
+ignore = [
+    "RUSTSEC-2025-0141", # bincode 1.x unmaintained (via iai-callgrind/criterion)
+    "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained (via iai-callgrind macros)
+]
 
 [licenses]
 version = 2

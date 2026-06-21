@@ -3,3 +3,8 @@
 # (The wasm crate uses no web-sys, so Node is sufficient.)
 [target.wasm32-unknown-unknown]
 runner = "wasm-bindgen-test-runner"
+# Enable wasm SIMD (128-bit) so `wide::f32x8` lowers to `v128` ops instead of its
+# scalar fallback — the demo gets the Phase 7 geometry speedup (W5). Supported by
+# all current browsers (Chrome 91+, Firefox 89+, Safari 16.4+). Frames stay
+# byte-identical to the scalar/native path (FR-7.4).
+rustflags = ["-C", "target-feature=+simd128"]

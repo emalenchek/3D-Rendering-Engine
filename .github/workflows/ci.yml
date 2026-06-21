@@ -54,9 +54,10 @@ jobs:
       fail-fast: false
       matrix:
         # Every feature combination must pass the full suite incl. golden frames.
-        # The parallel path is asserted byte-identical to scalar (FR-6.3), so the
-        # same goldens hold under both.
-        features: ["--no-default-features", "", "--features parallel"]
+        # The parallel and SIMD paths are asserted byte-identical to scalar
+        # (FR-6.3 / FR-7.4), so the same goldens hold under all of them.
+        features:
+          ["--no-default-features", "", "--features parallel", "--features simd", "--features parallel,simd"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -82,6 +83,46 @@ jobs:
         run: cargo test -p tte-wasm --target wasm32-unknown-unknown
       - name: Generate bindings + check size budget (NFR-7)
         run: ./web/build.sh
+
+  simd:
+    name: SIMD cross-target parity (FR-7.4 / NFR-14/15)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (simd, warnings are errors)
+        run: cargo clippy -p tte-core --all-targets --features simd -- -D warnings
+      - name: Byte-identical on AVX2 (host default)
+        run: cargo test -p tte-core --features simd
+      - name: Byte-identical on the SSE2 baseline (no AVX/AVX2/FMA)
+        run: cargo test -p tte-core --features simd
+        env:
+          RUSTFLAGS: "-C target-feature=-avx,-avx2,-fma"
+      - name: wasm simd128 builds (W5)
+        run: cargo build -p tte-core --no-default-features --features simd --target wasm32-unknown-unknown
+        env:
+          RUSTFLAGS: "-C target-feature=+simd128"
+
+  iai:
+    name: Instruction-count gate (FR-7.5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - uses: taiki-e/install-action@v2
+        with:
+          # Must match the iai-callgrind dev-dependency version (Cargo.lock).
+          tool: iai-callgrind-runner@0.16.1
+      - name: Deterministic instruction counts — scalar, then simd vs scalar
+        run: |
+          cargo bench -p tte-core --no-default-features --bench iai_geom
+          cargo bench -p tte-core --no-default-features --features simd --bench iai_geom
 
   demo-smoke:
     name: Demo smoke (Playwright)
