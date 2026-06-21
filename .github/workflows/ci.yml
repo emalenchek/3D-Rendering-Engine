@@ -146,10 +146,11 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Serve web/ and smoke-test the demo boots
+      - name: Serve web/ and smoke-test the demo boots (SIMD + scalar fallback)
         run: |
           (cd web && python3 -m http.server 8000 >/dev/null 2>&1 &)
-          node scripts/smoke.mjs
+          node scripts/smoke.mjs                                   # SIMD module
+          SMOKE_URL='http://localhost:8000/?nosimd' node scripts/smoke.mjs  # FR-9.3 scalar fallback
 
   deny:
     name: Dependency vetting
