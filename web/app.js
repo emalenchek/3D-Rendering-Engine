@@ -5,6 +5,28 @@
 import init, { Renderer } from "./pkg/tte_wasm.js";
 import { GridRenderer } from "./renderer.js";
 
+// A minimal `() -> v128` module: `WebAssembly.validate` returns true only where
+// fixed-width wasm SIMD is supported. (The canonical wasm-feature-detect probe.)
+const SIMD_PROBE = new Uint8Array([
+  0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8,
+  0, 65, 0, 253, 15, 253, 98, 11,
+]);
+
+// Pick the SIMD module where supported, else the scalar fallback — a `+simd128`
+// module fails to instantiate on iOS Safari < 16.4 (research 14 §1 / FR-9.2).
+// `?nosimd` forces the fallback so CI can exercise it (FR-9.3).
+function wasmUrl() {
+  const forced = new URLSearchParams(location.search).has("nosimd");
+  let simd = false;
+  try {
+    simd = !forced && WebAssembly.validate(SIMD_PROBE);
+  } catch {
+    simd = false;
+  }
+  const file = simd ? "./pkg/tte_wasm_bg.wasm" : "./pkg/tte_wasm_bg.scalar.wasm";
+  return new URL(file, import.meta.url);
+}
+
 const PRESETS = {
   Cube: { kind: "obj", text: cubeObj() },
   Sphere: { kind: "scene", text: "sphere rings=20 segments=32" },
@@ -23,7 +45,7 @@ plane translate=(0 -1 0) scale=(8 1 8)`,
 const COLS = 120, ROWS = 60;
 
 async function main() {
-  await init();
+  await init({ module_or_path: wasmUrl() });
   const renderer = new Renderer(COLS, ROWS);
 
   const canvas = document.getElementById("screen");

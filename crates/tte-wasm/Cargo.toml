@@ -15,13 +15,19 @@ crate-type = ["cdylib", "rlib"]
 [lints]
 workspace = true
 
+[features]
+# `simd` (default): the geometry kernel uses `wide::f32x8`, lowered to wasm `v128`
+# by the `+simd128` target-feature in .cargo/config.toml (W5). Build the scalar
+# fallback artifact with `--no-default-features` (and without +simd128) — needed
+# because a `+simd128` module won't instantiate on iOS Safari < 16.4 (research 14
+# §1 / FR-9.1). Output stays byte-identical either way (FR-7.4).
+default = ["simd"]
+simd = ["tte-core/simd"]
+
 [dependencies]
 # default-features = false → no rayon/`parallel` (stable wasm has no threads;
 # rayon doesn't build for wasm32-unknown-unknown). FR-6.5 stretch revisits this.
-# `simd` on: the geometry kernel uses `wide::f32x8`, which lowers to wasm `v128`
-# with the `+simd128` target-feature set in .cargo/config.toml (W5). Frames stay
-# byte-identical to scalar (FR-7.4).
-tte-core = { path = "../tte-core", default-features = false, features = ["simd"] }
+tte-core = { path = "../tte-core", default-features = false }
 # Keep web-sys OUT (decision V4a): the module exposes only data; JS owns the
 # canvas. wasm-bindgen alone marshals the typed-array frame buffers.
 wasm-bindgen = "0.2"
