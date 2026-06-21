@@ -4,6 +4,20 @@
 
 import init, { Renderer } from "./pkg/tte_wasm.js";
 import { GridRenderer } from "./renderer.js";
+import { WebGLGridRenderer } from "./webgl-renderer.js";
+
+// Pick the presenter: the WebGL2 GPU presenter (FR-11.1) when available, else the
+// Canvas2D one (NFR-23). `?nogl` forces Canvas2D so CI can exercise the fallback.
+function makePresenter(canvas, opts) {
+  if (!new URLSearchParams(location.search).has("nogl")) {
+    try {
+      return new WebGLGridRenderer(canvas, opts);
+    } catch (e) {
+      console.warn("tte: WebGL2 presenter unavailable, falling back to Canvas2D —", e.message);
+    }
+  }
+  return new GridRenderer(canvas, opts);
+}
 
 // A minimal `() -> v128` module: `WebAssembly.validate` returns true only where
 // fixed-width wasm SIMD is supported. (The canonical wasm-feature-detect probe.)
@@ -49,7 +63,7 @@ async function main() {
   const renderer = new Renderer(COLS, ROWS);
 
   const canvas = document.getElementById("screen");
-  const grid = new GridRenderer(canvas, { cellW: 8, cellH: 16, font: "15px monospace" });
+  const grid = makePresenter(canvas, { cellW: 8, cellH: 16, font: "15px monospace" });
 
   // Orbit state, mirrored into the WASM camera.
   let yaw = 0.6, pitch = 0.4, radius = 6.0;
