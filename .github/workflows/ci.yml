@@ -151,6 +151,8 @@ jobs:
           (cd web && python3 -m http.server 8000 >/dev/null 2>&1 &)
           node scripts/smoke.mjs                                   # SIMD module
           SMOKE_URL='http://localhost:8000/?nosimd' node scripts/smoke.mjs  # FR-9.3 scalar fallback
+      - name: Presenter pixel-parity (FR-10.1 / NFR-22)
+        run: node scripts/pixel-parity.mjs
 
   deny:
     name: Dependency vetting

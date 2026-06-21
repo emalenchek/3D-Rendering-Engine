@@ -2,9 +2,15 @@
 //
 // The WASM `Renderer` hands us three flat typed arrays per frame (glyphs as
 // codepoints, fg and bg as RGB triplets). We pre-render every glyph we might
-// draw, once, into an offscreen atlas, then blit one `drawImage` per cell each
-// frame — far faster than per-cell `fillText`. Full redraw every frame (no
-// dirty-diffing; worthless under full-frame 3D animation, report 07 Q6).
+// draw, once, into an offscreen atlas. Full redraw every frame (no dirty-diffing;
+// worthless under full-frame 3D animation, report 07 Q6).
+//
+// Presentation cost is the mobile bottleneck (research 14 §3): the old path
+// switched `globalCompositeOperation` to "source-in" *per cell* to tint each
+// glyph — thousands of compositing state-changes per frame, which iOS Safari
+// handles very poorly. `draw()` now batches that into **one** whole-frame
+// composite (FR-10.1), bit-identical to the per-cell path (kept as `drawCompat`
+// for the NFR-22 pixel-parity test).
 
 const ATLAS_GLYPHS =
   " .,-~:;=!*#$@█▀"; // ASCII ramp + full block + upper-half block
@@ -19,10 +25,6 @@ export class GridRenderer {
     this.font = font;
     this.cols = 0;
     this.rows = 0;
-    // Per-foreground-color atlases are built lazily and cached; for colored
-    // glyphs we instead tint a white-glyph atlas via per-cell fillStyle on a
-    // scratch canvas. Simpler and fast enough at our scale: we draw glyphs in
-    // white into the atlas and recolor with globalCompositeOperation.
     this._buildAtlas();
   }
 
@@ -50,7 +52,7 @@ export class GridRenderer {
       i++;
     }
     this.atlas = atlas;
-    // Scratch canvas for tinting a glyph to a target color.
+    // Scratch canvas for the per-cell tint in `drawCompat` (reference path only).
     this.tint = document.createElement("canvas");
     this.tint.width = w;
     this.tint.height = h;
@@ -62,45 +64,96 @@ export class GridRenderer {
     return this.font.replace(/(\d+)px/, (_, n) => `${Math.round(n * dpr)}px`);
   }
 
-  // Size the canvas to a cols×rows grid (device-pixel aware).
+  // Size the canvas (and the offscreen composite layers) to a cols×rows grid.
   resize(cols, rows) {
     this.cols = cols;
     this.rows = rows;
-    const dpr = this.dpr;
     this.canvas.width = cols * this.glyphPxW;
     this.canvas.height = rows * this.glyphPxH;
     this.canvas.style.width = `${cols * this.cellW}px`;
     this.canvas.style.height = `${rows * this.cellH}px`;
+
+    // Offscreen layers for the batched composite (FR-10.1): an `ink` layer
+    // (transparent, holds the white glyph shapes) and a `color` layer (opaque,
+    // holds the per-cell fg colour field).
+    if (!this.ink) {
+      this.ink = document.createElement("canvas");
+      this.inkCtx = this.ink.getContext("2d"); // alpha: true (default)
+      this.color = document.createElement("canvas");
+      this.colorCtx = this.color.getContext("2d", { alpha: false });
+    }
+    this.ink.width = this.color.width = this.canvas.width;
+    this.ink.height = this.color.height = this.canvas.height;
   }
 
-  // Draw one frame from the WASM renderer's typed arrays.
-  draw(cols, rows, glyphs, fg, bg) {
-    if (cols !== this.cols || rows !== this.rows) this.resize(cols, rows);
-    const { ctx, glyphPxW: gw, glyphPxH: gh } = this;
-
-    // Background: fill per-cell rects, batching runs of equal color.
+  // Run-batched solid fill of a cols×rows colour field into context `c`.
+  _fillField(c, cols, rows, field) {
+    const { glyphPxW: gw, glyphPxH: gh } = this;
     let i = 0;
     for (let y = 0; y < rows; y++) {
       let x = 0;
       while (x < cols) {
-        const r = bg[i * 3], g = bg[i * 3 + 1], b = bg[i * 3 + 2];
+        const r = field[i * 3], g = field[i * 3 + 1], b = field[i * 3 + 2];
         let run = 1;
         while (
           x + run < cols &&
-          bg[(i + run) * 3] === r &&
-          bg[(i + run) * 3 + 1] === g &&
-          bg[(i + run) * 3 + 2] === b
+          field[(i + run) * 3] === r &&
+          field[(i + run) * 3 + 1] === g &&
+          field[(i + run) * 3 + 2] === b
         ) run++;
-        ctx.fillStyle = `rgb(${r},${g},${b})`;
-        ctx.fillRect(x * gw, y * gh, run * gw, gh);
+        c.fillStyle = `rgb(${r},${g},${b})`;
+        c.fillRect(x * gw, y * gh, run * gw, gh);
         x += run;
         i += run;
       }
     }
+  }
 
-    // Foreground glyphs: tint the atlas glyph to the cell's fg, blit per cell.
-    // Spaces and full-block-with-matching-bg are skipped (nothing to draw).
-    i = 0;
+  // Draw one frame — ONE whole-frame composite (FR-10.1).
+  draw(cols, rows, glyphs, fg, bg) {
+    if (cols !== this.cols || rows !== this.rows) this.resize(cols, rows);
+    const { ctx, inkCtx: ink, glyphPxW: gw, glyphPxH: gh } = this;
+    const W = this.canvas.width, H = this.canvas.height;
+
+    // 1) Background straight onto the visible canvas.
+    this._fillField(ctx, cols, rows, bg);
+
+    // 2) Ink layer: blit every glyph shape (white) in one pass — `source-over`,
+    //    no per-cell compositing state change.
+    ink.globalCompositeOperation = "source-over";
+    ink.clearRect(0, 0, W, H);
+    let i = 0;
+    const space = 0x20;
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++, i++) {
+        const cp = glyphs[i];
+        if (cp === space) continue;
+        const idx = this.atlasIndex.get(cp);
+        if (idx === undefined) continue;
+        ink.drawImage(this.atlas, idx * gw, 0, gw, gh, x * gw, y * gh, gw, gh);
+      }
+    }
+
+    // 3) Colour field on its own layer.
+    this._fillField(this.colorCtx, cols, rows, fg);
+
+    // 4) ONE `source-in`: clip the colour field to the glyph ink → coloured
+    //    glyphs on transparent. (Per-pixel identical to tinting each cell.)
+    ink.globalCompositeOperation = "source-in";
+    ink.drawImage(this.color, 0, 0);
+
+    // 5) Composite the coloured glyphs over the background.
+    ctx.drawImage(this.ink, 0, 0);
+  }
+
+  // Reference presenter: the original per-cell `source-in` tint (one composite
+  // state change per non-space cell). Kept only to validate `draw()` is
+  // pixel-identical (NFR-22); not used by the live demo.
+  drawCompat(cols, rows, glyphs, fg, bg) {
+    if (cols !== this.cols || rows !== this.rows) this.resize(cols, rows);
+    const { ctx, glyphPxW: gw, glyphPxH: gh } = this;
+    this._fillField(ctx, cols, rows, bg);
+    let i = 0;
     const space = 0x20;
     for (let y = 0; y < rows; y++) {
       for (let x = 0; x < cols; x++, i++) {
@@ -120,7 +173,6 @@ export class GridRenderer {
     const t = this.tintCtx;
     const { glyphPxW: gw, glyphPxH: gh } = this;
     t.clearRect(0, 0, gw, gh);
-    // White glyph shape → multiply by solid color = colored glyph.
     t.globalCompositeOperation = "source-over";
     t.drawImage(this.atlas, idx * gw, 0, gw, gh, 0, 0, gw, gh);
     t.globalCompositeOperation = "source-in";
