@@ -67,11 +67,15 @@ fn bench_solid(c: &mut Criterion) {
     });
 }
 
-/// FR-6.4 / NFR-10: the large-mesh, high-resolution workload the parallel and
-/// SIMD speedups are measured against (~100k triangles at 400×200). Compare
-/// `cargo bench` (parallel feature on) vs `cargo bench --no-default-features`
-/// (scalar) to read the NFR-10 (≥3×) speedup; small working sets don't show it,
-/// which is why the target is defined on this bench (report 09).
+/// FR-6.4 / NFR-10 / NFR-13: the large-mesh, high-resolution workload the
+/// parallel and SIMD speedups are measured against (~100k triangles at 400×200).
+/// Read the speedups by comparing `cargo bench` runs:
+/// - parallel (NFR-10, ≥3×): `--features parallel` vs `--no-default-features`.
+/// - SIMD geometry stage (NFR-13, ≥1.5×): `--no-default-features --features simd`
+///   vs `--no-default-features`. The per-stage split is in the `prof_stage_split`
+///   harness (docs/research/11b-profile-results.md).
+/// Small working sets don't show the speedup, which is why the target is defined
+/// on this bench (report 09).
 fn bench_solid_large(c: &mut Criterion) {
     let camera = Camera::default();
     let model = Mat4::rotation_y(0.6) * Mat4::rotation_x(0.4);
