@@ -9,6 +9,8 @@
 // otherwise (NFR-23). Construction throws if WebGL2 is unavailable so the caller
 // can fall back.
 
+import { atlasIsBlank, makeCanvas, pickDpr } from "./gfx-util.js";
+
 const ATLAS_GLYPHS =
   " .,-~:;=!*#$@█▀"; // ASCII ramp + full block + upper-half block (matches GridRenderer)
 
@@ -48,7 +50,7 @@ void main() {
 export class WebGLGridRenderer {
   constructor(
     canvas,
-    { cellW = 9, cellH = 18, font = "16px monospace", maxDpr = 2 } = {},
+    { cellW = 9, cellH = 18, font = "16px monospace", maxDpr = 2, dpr } = {},
   ) {
     const gl = canvas.getContext("webgl2", {
       alpha: false,
@@ -65,7 +67,7 @@ export class WebGLGridRenderer {
     this.maxDpr = maxDpr;
     this.cols = 0;
     this.rows = 0;
-    this.dpr = Math.min(window.devicePixelRatio || 1, maxDpr);
+    this.dpr = Math.min(pickDpr({ dpr }), maxDpr);
     this.glyphPxW = Math.ceil(cellW * this.dpr);
     this.glyphPxH = Math.ceil(cellH * this.dpr);
 
@@ -126,9 +128,7 @@ export class WebGLGridRenderer {
     const w = this.glyphPxW, h = this.glyphPxH;
     this.atlasPxW = w * ATLAS_GLYPHS.length;
     this.atlasIndex = new Map();
-    const atlas = document.createElement("canvas");
-    atlas.width = this.atlasPxW;
-    atlas.height = h;
+    const atlas = makeCanvas(this.atlasPxW, h);
     const a = atlas.getContext("2d");
     a.font = this.font.replace(/(\d+)px/, (_, n) => `${Math.round(n * this.dpr)}px`);
     a.textBaseline = "top";
@@ -140,6 +140,8 @@ export class WebGLGridRenderer {
       a.fillText(ch, i * w, 0);
       i++;
     }
+    // No ink rendered (e.g. a worker without the font) → caller falls back.
+    this.atlasBlank = atlasIsBlank(a, this.atlasPxW, h);
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
@@ -173,8 +175,10 @@ export class WebGLGridRenderer {
     this.rows = rows;
     this.canvas.width = cols * this.glyphPxW;
     this.canvas.height = rows * this.glyphPxH;
-    this.canvas.style.width = `${cols * this.cellW}px`;
-    this.canvas.style.height = `${rows * this.cellH}px`;
+    if (this.canvas.style) {
+      this.canvas.style.width = `${cols * this.cellW}px`;
+      this.canvas.style.height = `${rows * this.cellH}px`;
+    }
     if (this.canvas.width * this.canvas.height > MAX_CANVAS_AREA) {
       console.warn(
         `tte: canvas backing ${this.canvas.width}×${this.canvas.height} exceeds the ` +
