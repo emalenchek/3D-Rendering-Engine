@@ -35,6 +35,7 @@ WASM_OPT_FEATURES=(
   --enable-mutable-globals
   --enable-multivalue
   --enable-reference-types
+  --enable-simd            # v128 from the geometry kernel (+simd128 build, W5)
 )
 if command -v wasm-opt >/dev/null 2>&1; then
   echo "› wasm-opt -Oz"
