@@ -26,7 +26,7 @@ Interactive keys: **arrows / hjkl** orbit · **+ / −** zoom · **space** toggl
 
 **Also runs in the browser** (v2.0 Phase 5): the same engine compiled to WebAssembly draws
 the cell grid to a canvas, with mouse + touch orbit and a live scene editor.
-**▶ Live demo: <https://emalenchek.github.io/3d-rendering-engine/>** (auto-deployed from
+**▶ Live demo: <https://emalenchek.github.io/3D-Rendering-Engine/>** (auto-deployed from
 `main`).
 
 ```sh
