@@ -38,7 +38,12 @@ wide = { version = "0.7", optional = true }
 insta = "1"             # golden-frame snapshot testing of rendered cell buffers
 proptest = "1"          # property-based tests for math invariants & parser round-trips
 criterion = "0.5"       # statistical benchmarks (NFR-3); cargo bench
+iai-callgrind = "0.16"
 
 [[bench]]
 name = "raster"
 harness = false         # criterion provides the harness (#[bench] is nightly-only)
+
+[[bench]]
+name = "iai_geom"
+harness = false         # iai-callgrind provides its own harness (FR-7.5)

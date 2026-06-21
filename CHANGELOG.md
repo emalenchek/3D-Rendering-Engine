@@ -26,9 +26,9 @@ research in `docs/research/11`–`12`.
   parity test guards the transform pass, the triangle list, and the rendered frame;
   CI runs it on both AVX2 and the SSE2 baseline.
 - **~1.5–1.6×** on the geometry stage at 100k tris @ 400×200, single-thread (NFR-13).
-- Deferred with rationale: `iai-callgrind` deterministic per-stage instruction-count
-  gate (FR-7.5) — the criterion `solid_100k_tri` bench already reads the speedup, and
-  the byte-identical guarantee is fully covered by the cross-target parity test.
+  The **live demo** ships with wasm SIMD too (`+simd128`, W5) — byte-identical frames.
+- Benches: criterion reads the scalar-vs-simd wall-clock; an `iai-callgrind` bench
+  (`iai_geom`) gives deterministic instruction counts as a CI regression gate (FR-7.5).
 
 ## v2.0.0 — Browser frontend + performance push
 

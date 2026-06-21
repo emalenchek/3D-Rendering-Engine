@@ -106,6 +106,24 @@ jobs:
         env:
           RUSTFLAGS: "-C target-feature=+simd128"
 
+  iai:
+    name: Instruction-count gate (FR-7.5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - uses: taiki-e/install-action@v2
+        with:
+          # Must match the iai-callgrind dev-dependency version (Cargo.lock).
+          tool: iai-callgrind-runner@0.16.1
+      - name: Deterministic instruction counts — scalar, then simd vs scalar
+        run: |
+          cargo bench -p tte-core --no-default-features --bench iai_geom
+          cargo bench -p tte-core --no-default-features --features simd --bench iai_geom
+
   demo-smoke:
     name: Demo smoke (Playwright)
     runs-on: ubuntu-latest
