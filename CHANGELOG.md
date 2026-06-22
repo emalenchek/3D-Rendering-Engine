@@ -1,6 +1,42 @@
 # Changelog
 
-## v2.1.0 — Profile-guided SIMD + live demo (unreleased)
+## v2.2.0 — Mobile compatibility & performance
+
+Make the live demo **load everywhere again** and run **smoothly on mobile** — every
+change presentation-layer or build/loader, so the engine's byte-identical output, the
+data-only WASM boundary, and the Pages deploy are untouched. Driven by `docs/research/14`
+(mobile compatibility); scope in `docs/06-v2.2-scope.md`.
+
+### Compatibility (Phase 9)
+- **Scalar wasm fallback** restores load on iOS Safari < 16.4: a `+simd128` module
+  fails to instantiate there, blanking the demo since v2.1. `web/build.sh` now emits two
+  artifacts (`tte_wasm_bg.wasm` SIMD + `tte_wasm_bg.scalar.wasm`) sharing one ABI-identical
+  glue, and `app.js` feature-detects wasm SIMD and loads the right one. CI smoke-tests both.
+
+### Canvas2D presenter performance (Phase 10)
+- **One-composite presenter**: the per-cell `globalCompositeOperation` glyph tinting (the
+  prime mobile-Safari bottleneck) is batched into a single whole-frame composite — bit-
+  identical output, guarded by a Playwright pixel-equality test.
+- **DPR cap** (≤2, decoupled from `devicePixelRatio`) + iOS canvas-area guard.
+- **Adaptive resolution** (scales the cell grid to the measured FPS, aspect preserved),
+  a **~30 fps cap** on touch devices, and **pause while hidden**. Policy is a pure,
+  unit-tested `nextScale()`; a new wasm `Renderer.resize()` keeps the subject on resize.
+- **OffscreenCanvas + Worker** path: the WASM rasterizer *and* the presenter run off the
+  UI thread when available, with an automatic main-thread fallback (forced via `?noworker`,
+  and self-recovering on worker error/timeout/blank-atlas).
+
+### GPU presenter (Phase 11)
+- **Additive WebGL2 presenter**: uploads the cell grid as textures and blends fg over bg
+  in one fullscreen shader, offloading compositing to the GPU. Runtime-selected with a
+  Canvas2D fallback (`?nogl`); matches the Canvas2D output within tolerance (CI-tested).
+  WebGPU deferred (iOS 26+). Now the live demo's default where supported.
+
+### Notes
+- The demo status line shows the live `render` vs `present` split for on-device profiling
+  (`docs/research/14b`). WASM threads remain deferred (GitHub Pages can't set COOP/COEP;
+  `docs/research/10`). `tte` CLI and terminal output are unchanged.
+
+## v2.1.0 — Profile-guided SIMD + live demo
 
 Make the engine *faster* (a profile-guided SIMD geometry stage) and *visible* (a
 live, auto-deployed, CI-tested demo). Scope in `docs/05-v2.1-scope.md`; de-risking

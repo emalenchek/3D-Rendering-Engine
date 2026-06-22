@@ -5,10 +5,11 @@ A high-performance 3D rendering engine, text-encoded in both directions:
 - **Text in** — scenes described in a small, human-writable declarative DSL
 - **Text out** — a from-scratch software rasterizer presenting frames as ASCII/Unicode + ANSI color in the terminal (browser/WASM frontend planned)
 
-**v2.0.0** — text in, text out: render OBJ models *and* scenes described in a small text DSL
+**v2.2.0** — text in, text out: render OBJ models *and* scenes described in a small text DSL
 as solid, depth-tested, diffuse-shaded frames (ASCII, truecolor, or half-block) with a live
-orbit camera. Runs **in the terminal and in the browser** (WASM), and rasterizes **in
-parallel** across cores. See [CHANGELOG.md](CHANGELOG.md).
+orbit camera. Runs **in the terminal and in the browser** (WASM), rasterizes **in parallel**
+across cores with a **profile-guided SIMD** geometry stage, and the browser demo presents on
+the **GPU (WebGL2)** in a worker — tuned to run on mobile. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
@@ -64,8 +65,10 @@ Full setup guide: [docs/03-dev-setup.md](docs/03-dev-setup.md)
 - **[Requirements spec & test plan](docs/01-requirements-spec.md)** — requirement IDs mapped to functional e2e tests
 - **[Test harness guide](docs/02-test-harness.md)** — test kinds, golden-frame snapshots, e2e patterns, CI gates
 - **[Dev environment setup](docs/03-dev-setup.md)** — prerequisites, build, dependencies, tooling
-- **[v2.0 scope](docs/04-v2.0-scope.md)** — next release: Browser/WASM frontend + Performance push (proposed)
-- Research reports (cited, confidence-rated):
+- Release scopes — **[v2.0](docs/04-v2.0-scope.md)** (browser + parallel), **[v2.1](docs/05-v2.1-scope.md)** (profile-guided SIMD + live demo), **[v2.2](docs/06-v2.2-scope.md)** (mobile compatibility & performance)
+- Research reports (cited, confidence-rated): `docs/research/01`–`14b` — including
+  [11 SIMD profiling](docs/research/11-simd-profiling.md), [12 Pages deploy](docs/research/12-github-pages-deploy.md),
+  and [14 mobile compatibility](docs/research/14-mobile-compatibility.md). First six:
   1. [3D engine architectures & API design](docs/research/01-engine-architectures.md)
   2. [ASCII/terminal 3D rendering prior art & performance limits](docs/research/02-ascii-terminal-rendering.md)
   3. [Text scene-description formats & DSL design](docs/research/03-scene-formats-dsl.md)
