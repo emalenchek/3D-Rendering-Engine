@@ -12,17 +12,30 @@
 // composite (FR-10.1), bit-identical to the per-cell path (kept as `drawCompat`
 // for the NFR-22 pixel-parity test).
 
+import { atlasIsBlank, makeCanvas, pickDpr } from "./gfx-util.js";
+
 const ATLAS_GLYPHS =
   " .,-~:;=!*#$@█▀"; // ASCII ramp + full block + upper-half block
 
+// iOS Safari refuses to render a canvas whose backing store exceeds this area
+// (4096² px, pre-iOS-18; raised to 8192² in iOS 18). Stay under it (FR-10.2).
+const MAX_CANVAS_AREA = 16_777_216;
+
 export class GridRenderer {
-  // `cellW`/`cellH` are device pixels per character cell.
-  constructor(canvas, { cellW = 9, cellH = 18, font = "16px monospace" } = {}) {
+  // `cellW`/`cellH` are device pixels per character cell. `maxDpr` caps the
+  // backing-store scale (FR-10.2): retina phones report devicePixelRatio 2–3,
+  // which squares the fill cost for no visible gain at these cell sizes.
+  constructor(
+    canvas,
+    { cellW = 9, cellH = 18, font = "16px monospace", maxDpr = 2, dpr } = {},
+  ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d", { alpha: false });
     this.cellW = cellW;
     this.cellH = cellH;
     this.font = font;
+    this.maxDpr = maxDpr;
+    this.optDpr = dpr;
     this.cols = 0;
     this.rows = 0;
     this._buildAtlas();
@@ -30,16 +43,14 @@ export class GridRenderer {
 
   // Render one white-on-transparent copy of each glyph into an offscreen atlas.
   _buildAtlas() {
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(pickDpr({ dpr: this.optDpr }), this.maxDpr);
     this.dpr = dpr;
     const w = Math.ceil(this.cellW * dpr);
     const h = Math.ceil(this.cellH * dpr);
     this.glyphPxW = w;
     this.glyphPxH = h;
     this.atlasIndex = new Map();
-    const atlas = document.createElement("canvas");
-    atlas.width = w * ATLAS_GLYPHS.length;
-    atlas.height = h;
+    const atlas = makeCanvas(w * ATLAS_GLYPHS.length, h);
     const a = atlas.getContext("2d");
     a.font = this._scaledFont(dpr);
     a.textBaseline = "top";
@@ -52,10 +63,10 @@ export class GridRenderer {
       i++;
     }
     this.atlas = atlas;
+    // No ink rendered (e.g. a worker without the font) → caller falls back.
+    this.atlasBlank = atlasIsBlank(a, atlas.width, h);
     // Scratch canvas for the per-cell tint in `drawCompat` (reference path only).
-    this.tint = document.createElement("canvas");
-    this.tint.width = w;
-    this.tint.height = h;
+    this.tint = makeCanvas(w, h);
     this.tintCtx = this.tint.getContext("2d");
   }
 
@@ -70,16 +81,26 @@ export class GridRenderer {
     this.rows = rows;
     this.canvas.width = cols * this.glyphPxW;
     this.canvas.height = rows * this.glyphPxH;
-    this.canvas.style.width = `${cols * this.cellW}px`;
-    this.canvas.style.height = `${rows * this.cellH}px`;
+    // OffscreenCanvas (worker) has no `.style`; the main thread sizes the
+    // displayed element. On the main thread this couples display to the grid.
+    if (this.canvas.style) {
+      this.canvas.style.width = `${cols * this.cellW}px`;
+      this.canvas.style.height = `${rows * this.cellH}px`;
+    }
+    if (this.canvas.width * this.canvas.height > MAX_CANVAS_AREA) {
+      console.warn(
+        `tte: canvas backing ${this.canvas.width}×${this.canvas.height} exceeds the ` +
+          `iOS Safari area cap (${MAX_CANVAS_AREA}px) — lower maxDpr or the grid size.`,
+      );
+    }
 
     // Offscreen layers for the batched composite (FR-10.1): an `ink` layer
     // (transparent, holds the white glyph shapes) and a `color` layer (opaque,
     // holds the per-cell fg colour field).
     if (!this.ink) {
-      this.ink = document.createElement("canvas");
+      this.ink = makeCanvas(this.canvas.width, this.canvas.height);
       this.inkCtx = this.ink.getContext("2d"); // alpha: true (default)
-      this.color = document.createElement("canvas");
+      this.color = makeCanvas(this.canvas.width, this.canvas.height);
       this.colorCtx = this.color.getContext("2d", { alpha: false });
     }
     this.ink.width = this.color.width = this.canvas.width;

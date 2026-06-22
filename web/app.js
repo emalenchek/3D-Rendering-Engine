@@ -1,23 +1,15 @@
 // Browser app (FR-5.3): wires the WASM Renderer to the canvas, pointer-event
 // orbit (mouse + touch), wheel/pinch zoom, mode switching, and a live scene
 // editor. The WASM module exposes only data; all DOM/canvas work lives here.
+//
+// FR-10.4: rendering runs in a Web Worker via OffscreenCanvas when available
+// (the worker owns the WASM Renderer + presenter, off the UI thread), with an
+// automatic main-thread fallback — `?noworker` forces it, and the worker path
+// also self-falls-back if it can't produce a frame (e.g. no font in the worker).
 
 import init, { Renderer } from "./pkg/tte_wasm.js";
-import { GridRenderer } from "./renderer.js";
-import { WebGLGridRenderer } from "./webgl-renderer.js";
-
-// Pick the presenter: the WebGL2 GPU presenter (FR-11.1) when available, else the
-// Canvas2D one (NFR-23). `?nogl` forces Canvas2D so CI can exercise the fallback.
-function makePresenter(canvas, opts) {
-  if (!new URLSearchParams(location.search).has("nogl")) {
-    try {
-      return new WebGLGridRenderer(canvas, opts);
-    } catch (e) {
-      console.warn("tte: WebGL2 presenter unavailable, falling back to Canvas2D —", e.message);
-    }
-  }
-  return new GridRenderer(canvas, opts);
-}
+import { makePresenter } from "./presenter.js";
+import { nextScale } from "./adaptive.js";
 
 // A minimal `() -> v128` module: `WebAssembly.validate` returns true only where
 // fixed-width wasm SIMD is supported. (The canonical wasm-feature-detect probe.)
@@ -57,89 +49,193 @@ plane translate=(0 -1 0) scale=(8 1 8)`,
 };
 
 const COLS = 120, ROWS = 60;
+const CELL = { cellW: 8, cellH: 16, font: "15px monospace" };
+const mobileFrameMs = () => (matchMedia("(pointer: coarse)").matches ? 1000 / 30 : 0);
 
 async function main() {
+  const params = new URLSearchParams(location.search);
+  const forceCanvas = params.has("nogl");
+  const status = document.getElementById("status");
+  let canvas = document.getElementById("screen");
+
+  const canWorker = !params.has("noworker")
+    && typeof Worker !== "undefined"
+    && typeof canvas.transferControlToOffscreen === "function";
+
+  let controller = null;
+  if (canWorker) {
+    try {
+      controller = await startWorker(canvas, { forceCanvas, status });
+    } catch (e) {
+      console.warn("tte: worker render path unavailable, using main thread —", e.message);
+      canvas = replaceCanvas(canvas); // transferControlToOffscreen is irreversible
+    }
+  }
+  if (!controller) {
+    controller = await startMainThread(canvas, { forceCanvas, status });
+  }
+  wireUI(canvas, controller);
+}
+
+// A transferred canvas can't be reclaimed; clone a fresh element to draw on.
+function replaceCanvas(old) {
+  const fresh = old.cloneNode(false);
+  old.replaceWith(fresh);
+  return fresh;
+}
+
+// Render in a worker (OffscreenCanvas). Resolves once the worker produces its
+// first frame; rejects (→ caller falls back) on worker error or timeout.
+async function startWorker(canvas, { forceCanvas, status }) {
+  const offscreen = canvas.transferControlToOffscreen();
+  // The worker can't size the displayed element; do it here (mobile pins via max-width).
+  canvas.style.width = `${COLS * CELL.cellW}px`;
+  canvas.style.height = `${ROWS * CELL.cellH}px`;
+  const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+  const errBox = document.getElementById("error");
+
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("worker produced no frame in time")), 8000);
+    worker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "status") {
+        status.textContent = m.text;
+        clearTimeout(timer);
+        resolve();
+      } else if (m.type === "loaderror") {
+        errBox.textContent = m.message;
+      } else if (m.type === "loadok") {
+        errBox.textContent = "";
+      } else if (m.type === "error") {
+        clearTimeout(timer);
+        reject(new Error(m.message));
+      }
+    };
+    worker.onerror = (ev) => {
+      clearTimeout(timer);
+      reject(new Error(ev.message || "worker error"));
+    };
+    worker.postMessage(
+      {
+        type: "init",
+        canvas: offscreen,
+        cols: COLS,
+        rows: ROWS,
+        cellW: CELL.cellW,
+        cellH: CELL.cellH,
+        font: CELL.font,
+        dpr: window.devicePixelRatio || 1,
+        minFrameMs: mobileFrameMs(),
+        wasmUrl: wasmUrl().href,
+        forceCanvas,
+        yaw: 0.6,
+        pitch: 0.4,
+        radius: 6.0,
+      },
+      [offscreen],
+    );
+  });
+
+  document.addEventListener("visibilitychange", () =>
+    worker.postMessage({ type: "visibility", hidden: document.hidden }),
+  );
+  return {
+    setOrbit: (y, p, r) => worker.postMessage({ type: "orbit", yaw: y, pitch: p, radius: r }),
+    setMode: (m) => worker.postMessage({ type: "mode", mode: m }),
+    load: (kind, text) => worker.postMessage({ type: "load", kind, text }),
+  };
+}
+
+// Render on the main thread (the fallback, and where OffscreenCanvas is absent).
+async function startMainThread(canvas, { forceCanvas, status }) {
   await init({ module_or_path: wasmUrl() });
   const renderer = new Renderer(COLS, ROWS);
+  renderer.set_orbit(0.6, 0.4, 6.0);
+  const grid = makePresenter(canvas, { ...CELL, forceCanvas });
+  const errBox = document.getElementById("error");
 
-  const canvas = document.getElementById("screen");
-  const grid = makePresenter(canvas, { cellW: 8, cellH: 16, font: "15px monospace" });
+  const minFrameMs = mobileFrameMs();
+  let lastFrameAt = 0, hidden = document.hidden, gridScale = 1;
+  let frames = 0, lastFpsAt = performance.now(), renderMs = 0, presentMs = 0;
+  document.addEventListener("visibilitychange", () => {
+    hidden = document.hidden;
+    if (!hidden) {
+      lastFpsAt = performance.now();
+      frames = renderMs = presentMs = 0;
+    }
+  });
 
-  // Orbit state, mirrored into the WASM camera.
-  let yaw = 0.6, pitch = 0.4, radius = 6.0;
-  const apply = () => renderer.set_orbit(yaw, pitch, radius);
-  apply();
-
-  const status = document.getElementById("status");
-  let frames = 0, lastFpsAt = performance.now(), fps = 0;
-  // M2 device-profile instrumentation: average the wasm render() vs the canvas
-  // present (draw()) cost and surface the split in the status line, so the
-  // render-vs-present ratio can be read directly on a phone (no Web Inspector).
-  let renderMs = 0, presentMs = 0;
-
-  function frame() {
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (hidden || now - lastFrameAt < minFrameMs) return;
+    lastFrameAt = now;
     const t0 = performance.now();
     renderer.render();
     const t1 = performance.now();
-    grid.draw(
-      renderer.width(),
-      renderer.height(),
-      renderer.glyphs(),
-      renderer.fg(),
-      renderer.bg(),
-    );
+    grid.draw(renderer.width(), renderer.height(), renderer.glyphs(), renderer.fg(), renderer.bg());
     const t2 = performance.now();
     renderMs += t1 - t0;
     presentMs += t2 - t1;
     frames++;
     if (t2 - lastFpsAt >= 500) {
-      fps = Math.round((frames * 1000) / (t2 - lastFpsAt));
+      const fps = Math.round((frames * 1000) / (t2 - lastFpsAt));
       const r = (renderMs / frames).toFixed(1);
       const p = (presentMs / frames).toFixed(1);
       status.textContent =
         `${renderer.width()}×${renderer.height()} · ${fps} FPS · render ${r}ms · present ${p}ms`;
-      frames = 0;
-      renderMs = 0;
-      presentMs = 0;
+      frames = renderMs = presentMs = 0;
       lastFpsAt = t2;
+      const ns = nextScale(gridScale, fps);
+      if (ns !== gridScale) {
+        gridScale = ns;
+        renderer.resize(Math.max(2, Math.round(COLS * ns)), Math.max(2, Math.round(ROWS * ns)));
+      }
     }
-    requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
+
+  return {
+    setOrbit: (y, p, r) => renderer.set_orbit(y, p, r),
+    setMode: (m) => {
+      try {
+        renderer.set_mode(m);
+      } catch { /* unknown mode: ignore */ }
+    },
+    load: (kind, text) => {
+      try {
+        if (kind === "obj") renderer.load_obj(text);
+        else renderer.load_scene(text);
+        errBox.textContent = "";
+      } catch (e) {
+        errBox.textContent = String(e);
+      }
+    },
+  };
+}
+
+// UI wiring — identical for both render paths, driving the `controller`.
+function wireUI(canvas, controller) {
+  let yaw = 0.6, pitch = 0.4, radius = 6.0;
+  const applyOrbit = () => controller.setOrbit(yaw, pitch, radius);
 
   setupPointer(canvas, {
     onOrbit(dx, dy) {
       yaw -= dx * 0.01;
       pitch = clamp(pitch + dy * 0.01, -1.55, 1.55);
-      apply();
+      applyOrbit();
     },
     onZoom(factor) {
       radius = clamp(radius * factor, 1.5, 50);
-      apply();
+      applyOrbit();
     },
   });
 
-  // Output mode.
-  document.getElementById("mode").addEventListener("change", (e) => {
-    renderer.set_mode(e.target.value);
-  });
+  document.getElementById("mode").addEventListener("change", (e) => controller.setMode(e.target.value));
 
-  // Live scene editor: re-load on every edit; keep the last good subject on error.
   const editor = document.getElementById("editor");
-  const errBox = document.getElementById("error");
-  function loadFromEditor(kind) {
-    try {
-      if (kind === "obj") renderer.load_obj(editor.value);
-      else renderer.load_scene(editor.value);
-      errBox.textContent = "";
-    } catch (e) {
-      errBox.textContent = String(e);
-    }
-  }
   let editorKind = "scene";
-  editor.addEventListener("input", () => loadFromEditor(editorKind));
+  editor.addEventListener("input", () => controller.load(editorKind, editor.value));
 
-  // Presets populate the editor and load.
   const presetSel = document.getElementById("preset");
   for (const name of Object.keys(PRESETS)) {
     const opt = document.createElement("option");
@@ -150,7 +246,7 @@ async function main() {
     const p = PRESETS[name];
     editorKind = p.kind;
     editor.value = p.text;
-    loadFromEditor(p.kind);
+    controller.load(p.kind, p.text);
   }
   presetSel.addEventListener("change", (e) => selectPreset(e.target.value));
   selectPreset("Scene");

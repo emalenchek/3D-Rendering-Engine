@@ -141,6 +141,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Adaptive-resolution policy unit test (FR-10.3)
+        run: node scripts/adaptive.test.mjs
       - name: Install Playwright + Chromium
         working-directory: scripts
         run: |
@@ -149,13 +151,16 @@ jobs:
       - name: Serve web/ and smoke-test the demo boots (presenters × wasm variants)
         run: |
           (cd web && python3 -m http.server 8000 >/dev/null 2>&1 &)
-          node scripts/smoke.mjs                                   # WebGL2 + SIMD
-          SMOKE_URL='http://localhost:8000/?nosimd' node scripts/smoke.mjs  # FR-9.3 scalar fallback
-          SMOKE_URL='http://localhost:8000/?nogl' node scripts/smoke.mjs    # NFR-23 Canvas2D fallback
+          node scripts/smoke.mjs                                   # worker + WebGL2 + SIMD
+          SMOKE_URL='http://localhost:8000/?nosimd' node scripts/smoke.mjs    # FR-9.3 scalar fallback
+          SMOKE_URL='http://localhost:8000/?nogl' node scripts/smoke.mjs      # NFR-23 Canvas2D fallback
+          SMOKE_URL='http://localhost:8000/?noworker' node scripts/smoke.mjs  # FR-10.4 main-thread fallback
       - name: Presenter pixel-parity (FR-10.1 / NFR-22)
         run: node scripts/pixel-parity.mjs
       - name: WebGL presenter parity (FR-11.2 / NFR-23)
         run: node scripts/webgl-parity.mjs
+      - name: DPR cap on a retina viewport (FR-10.2)
+        run: node scripts/dpr-cap.mjs
 
   deny:
     name: Dependency vetting

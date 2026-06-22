@@ -135,6 +135,15 @@ impl Renderer {
         self.frame = web_frame(&fb, self.mode);
     }
 
+    /// Resize the cell grid (FR-10.3 adaptive resolution). Keeps the current
+    /// subject, camera, and mode — just re-renders at the new dimensions. The
+    /// presenter follows the new `width()`/`height()` on its next draw.
+    pub fn resize(&mut self, width: u16, height: u16) {
+        self.width = width.max(1);
+        self.height = height.max(1);
+        self.render();
+    }
+
     /// Cell-grid width.
     pub fn width(&self) -> u16 {
         self.frame.width()
