@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "tte-cli"
-version = "2.0.0"
+version = "2.2.0"
 dependencies = [
  "assert_cmd",
  "crossterm",
@@ -1274,7 +1274,7 @@ dependencies = [
 
 [[package]]
 name = "tte-core"
-version = "2.0.0"
+version = "2.2.0"
 dependencies = [
  "approx",
  "criterion",
@@ -1287,7 +1287,7 @@ dependencies = [
 
 [[package]]
 name = "tte-wasm"
-version = "2.0.0"
+version = "2.2.0"
 dependencies = [
  "tte-core",
  "wasm-bindgen",
